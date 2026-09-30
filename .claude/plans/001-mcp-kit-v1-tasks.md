@@ -289,8 +289,8 @@ Each task: do it, run `pnpm typecheck && pnpm test`, tick it in section 5, commi
 - [x] 1.8 STANDARD.md
 - [x] 2.1 kit:update
 - [x] 2.2 static source + search
-- [ ] 3.1 OAuth + gate + Access + consent
-- [ ] 3.2 gate tests
+- [x] 3.1 OAuth + gate + Access + consent
+- [x] 3.2 gate tests
 - [ ] 4.1 metrics proxy
 - [ ] 4.2 dashboard
 - [ ] 5.1 README, TRANSFER, LICENSE

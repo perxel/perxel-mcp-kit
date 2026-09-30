@@ -3,13 +3,29 @@ import {
   McpServer,
   createMcpHandler,
   isLegacyRequest,
-  type AuthInfo,
 } from "@modelcontextprotocol/server";
-import { callerKeyFor } from "./caller.js";
-import { clientFamily } from "./caller.js";
+import {
+  getOAuthApi,
+  insufficientScope,
+  type OAuthHelpers,
+} from "@cloudflare/workers-oauth-provider";
+import { callerKeyFor, clientFamily } from "./caller.js";
+import { handleAuthorizeGet, handleAuthorizePost, handleCallback } from "./access.js";
 import type { McpConfig } from "./config.js";
 import { renderDocsPage } from "./docs-page.js";
 import type { Env } from "./env.js";
+import {
+  buildProvider,
+  gateCallsFromBody,
+  gateCallsFromHeaders,
+  missingScopesFor,
+  needsAuthFor,
+  privateScopesFor,
+  providerOptionsFor,
+  resourceMetadataDoc,
+  unauthorizedResponse,
+  type GateCall,
+} from "./oauth.js";
 import { checkRateLimit } from "./rate-limit.js";
 import { recordToolCall, type MetricStatus } from "./metrics.js";
 import { ToolError, type ToolContext } from "./tool.js";
@@ -20,14 +36,6 @@ export interface ToolFinish {
   status: Extract<MetricStatus, "ok" | "error" | "invalid_input">;
   code: string;
   count: number;
-}
-
-function toToolAuth(authInfo: AuthInfo | undefined): ToolContext["auth"] {
-  if (!authInfo) return null;
-  const extra = (authInfo.extra ?? {}) as Record<string, unknown>;
-  const userId = typeof extra.userId === "string" ? extra.userId : (authInfo.clientId ?? "unknown");
-  const email = typeof extra.email === "string" ? extra.email : undefined;
-  return { userId, email, scopes: authInfo.scopes ?? [] };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -83,18 +91,6 @@ function json(status: number, body: unknown, headers?: HeadersInit): Response {
   return Response.json(body, { status, headers });
 }
 
-/** One JSON-RPC message's tools/call, if it is one. */
-function findToolCalls(body: unknown): { name: string; id: unknown }[] {
-  const msgs = Array.isArray(body) ? body : [body];
-  const out: { name: string; id: unknown }[] = [];
-  for (const m of msgs) {
-    if (!isRecord(m) || m["method"] !== "tools/call" || !isRecord(m["params"])) continue;
-    if (typeof m["params"]["name"] !== "string") continue;
-    out.push({ name: m["params"]["name"] as string, id: (m["id"] ?? null) as unknown });
-  }
-  return out;
-}
-
 /** The 2026 client identity (`clientInfo.name`) from the first message that carries it. */
 function clientInfoName(body: unknown): string | undefined {
   const msgs = Array.isArray(body) ? body : [body];
@@ -118,9 +114,116 @@ export interface WorkerOptions {
   sources?: Record<string, SourceStatus>;
 }
 
+type Era = "legacy" | "modern";
+
+interface McpServeOpts {
+  request: Request;
+  env: Env;
+  ctx: ExecutionContext;
+  config: McpConfig;
+  requestId: string;
+  log: (event: string, fields?: Record<string, unknown>) => void;
+  t0: number;
+  ip: string | undefined;
+  body: unknown;
+  era: Era;
+  /** The verified identity (null for anonymous public calls). */
+  toolAuth: ToolContext["auth"];
+  metricAuth: "anon" | "user";
+  userId: string | null;
+}
+
+interface ReqFacts {
+  client: ReturnType<typeof clientFamily>;
+  country: string;
+  callerKey: string;
+}
+
+async function reqFacts(
+  env: Env,
+  request: Request,
+  body: unknown,
+  ip: string | undefined,
+  userId: string | null,
+): Promise<ReqFacts> {
+  return {
+    client: clientFamily(ip, clientInfoName(body), request.headers.get("user-agent") ?? undefined),
+    country: (request as unknown as { cf?: { country?: string } }).cf?.country ?? "",
+    callerKey: await callerKeyFor(env.IP_HASH_SALT, userId, ip).catch(() => ""),
+  };
+}
+
+/**
+ * Serve one /mcp request through the SDK (stateless) and record one metrics
+ * row per `tools/call`. The caller has already passed the gate; `toolAuth`
+ * carries the verified identity (or null).
+ */
+async function serveMcp(opts: McpServeOpts): Promise<Response> {
+  const { request, env, ctx, config, requestId, log, t0, ip, body, era, toolAuth, metricAuth, userId } = opts;
+  const calls = gateCallsFromBody(body);
+  const finishes: ToolFinish[] = [];
+  const perRequest = createMcpHandler(
+    () => {
+      const toolCtx: ToolContext = { env, auth: toolAuth, requestId, log };
+      return buildServer(config, toolCtx, { onFinish: (f) => finishes.push(f) });
+    },
+    { legacy: "stateless" },
+  );
+  const res = await perRequest.fetch(request);
+  const bytes = await res
+    .clone()
+    .text()
+    .then((t) => new TextEncoder().encode(t).length)
+    .catch(() => -1);
+  const latencyMs = Date.now() - t0;
+
+  if (calls.length > 0) {
+    const facts = await reqFacts(env, request, body, ip, userId);
+    const remaining = [...finishes];
+    ctx.waitUntil(
+      (async () => {
+        for (const call of calls) {
+          const tool = config.tools.find((t) => t.name === call.name);
+          const idx = remaining.findIndex((f) => f.tool === call.name);
+          const finish = idx >= 0 ? remaining.splice(idx, 1)[0] : undefined;
+          recordToolCall(env, {
+            callerKey: facts.callerKey,
+            slug: config.slug,
+            tool: tool ? tool.name : "unknown",
+            // The SDK answers isError without running execute on a schema
+            // failure (invalid_input) or an unknown tool (error).
+            status: finish ? finish.status : tool ? "invalid_input" : "error",
+            code: finish ? finish.code : tool ? "invalid_params" : "method_not_found",
+            client: facts.client,
+            access: tool ? tool.access : "public",
+            auth: metricAuth,
+            country: facts.country,
+            era,
+            latencyMs,
+            count: finish ? finish.count : -1,
+            bytes,
+          });
+        }
+      })(),
+    );
+  }
+  log("request", { route: "mcp", method: request.method, status: res.status, latencyMs, era });
+  return res;
+}
+
+/** The provider-validated identity the apiHandler sees (subset of OAuthResourceAuth we rely on). */
+interface ValidatedIdentity {
+  token: string;
+  audience: string;
+  scope: string[];
+  userId?: string;
+  clientId?: string;
+}
+
 /**
  * The kit entry: `export default createWorker(config)` in the clone's `src/index.ts`.
- * Phase 1: public tools only (no token yet); OAuth routes answer 501 until phase 3.
+ * One-Worker OAuth shape (task 3.5): the gate answers 401 itself for private
+ * calls without a token; anything carrying a token goes through the provider.
  */
 export function createWorker(config: McpConfig, opts?: WorkerOptions) {
   async function fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -129,6 +232,99 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
     const requestId = crypto.randomUUID();
     const log = (event: string, fields?: Record<string, unknown>) =>
       console.log(JSON.stringify({ requestId, event, ...fields }));
+    const publicUrl = (env.MCP_PUBLIC_URL as string | undefined) ?? `http://${url.host}`;
+
+    // The provider needs the handlers before it exists; the default handler
+    // resolves the OAuth helpers lazily from the same options object.
+    const apiHandler = {
+      fetch: async (req: Request, e: Env, c: ExecutionContext): Promise<Response> => {
+        const t0 = Date.now();
+        const raw = c as ExecutionContext & { props?: { userId?: string; email?: string | null }; auth?: ValidatedIdentity };
+        const granted = raw.auth?.scope ?? [];
+        let body: unknown = null;
+        if (req.method === "POST") {
+          try {
+            body = await req.clone().json();
+          } catch {
+            body = null;
+          }
+        }
+        const calls = gateCallsFromBody(body);
+        const names = calls.map((call) => call.name);
+        const missing = missingScopesFor(config, names, granted);
+        const ip = req.headers.get("CF-Connecting-IP") ?? undefined;
+        const userId = raw.auth?.userId ?? raw.props?.userId ?? null;
+        if (missing.length > 0) {
+          const res = insufficientScope(
+            raw.auth as Parameters<typeof insufficientScope>[0],
+            missing,
+          );
+          const bytes = await res
+            .clone()
+            .text()
+            .then((t) => new TextEncoder().encode(t).length)
+            .catch(() => -1);
+          const facts = await reqFacts(e, req, body, ip, userId);
+          const era = await isLegacyRequest(req)
+            .then((legacy) => (legacy ? ("legacy" as const) : ("modern" as const)))
+            .catch(() => "legacy" as const);
+          c.waitUntil(
+            (async () => {
+              for (const call of calls) {
+                const tool = config.tools.find((t) => t.name === call.name);
+                recordToolCall(e, {
+                  callerKey: facts.callerKey,
+                  slug: config.slug,
+                  tool: tool ? tool.name : "unknown",
+                  status: "forbidden",
+                  code: "insufficient_scope",
+                  client: facts.client,
+                  access: tool ? tool.access : "public",
+                  auth: "user",
+                  country: facts.country,
+                  era,
+                  latencyMs: Date.now() - t0,
+                  count: -1,
+                  bytes,
+                });
+              }
+            })(),
+          );
+          return res;
+        }
+        const email = raw.props?.email ?? undefined;
+        return serveMcp({
+          request: req,
+          env: e,
+          ctx: c,
+          config,
+          requestId,
+          log,
+          t0,
+          ip,
+          body,
+          era: await isLegacyRequest(req)
+            .then((legacy) => (legacy ? ("legacy" as const) : ("modern" as const)))
+            .catch(() => "legacy" as const),
+          toolAuth: userId
+            ? { userId, ...(email ? { email } : {}), scopes: granted }
+            : { userId: "unknown", scopes: granted },
+          metricAuth: "user",
+          userId,
+        });
+      },
+    };
+    const defaultHandler = {
+      fetch: async (req: Request, e: Env, _c: ExecutionContext): Promise<Response> => {
+        const api: OAuthHelpers = getOAuthApi(providerOpts, e);
+        const p = new URL(req.url).pathname;
+        if (p === "/authorize" && req.method === "GET") return handleAuthorizeGet(req, e, api, config);
+        if (p === "/authorize" && req.method === "POST") return handleAuthorizePost(req, e, api, config);
+        if (p === "/callback" && req.method === "GET") return handleCallback(req, e, api, config);
+        return json(404, { error: "not_found" });
+      },
+    };
+    const providerOpts = providerOptionsFor(config, publicUrl, { apiHandler, defaultHandler });
 
     if (path === "/mcp") {
       const t0 = Date.now();
@@ -148,7 +344,10 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
           body = null;
         }
       }
-      const calls = request.method === "POST" ? findToolCalls(body) : [];
+      // Body parse wins; the 2026 headers are the fallback (e.g. a tools/list
+      // body carrying a tools/call header never happens, but be liberal).
+      const bodyCalls = request.method === "POST" ? gateCallsFromBody(body) : [];
+      const calls: GateCall[] = bodyCalls.length > 0 ? bodyCalls : gateCallsFromHeaders(request);
       const firstId = calls.length > 0 ? calls[0].id : null;
 
       if (!decision.allowed) {
@@ -161,6 +360,7 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
         const latencyMs = Date.now() - t0;
         ctx.waitUntil(
           (async () => {
+            const facts = await reqFacts(env, request, body, ip, null);
             for (const call of calls) {
               const tool = config.tools.find((t) => t.name === call.name);
               recordToolCall(env, {
@@ -169,10 +369,10 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
                 tool: tool ? tool.name : "unknown",
                 status: "rate_limited",
                 code: "",
-                client: clientFamily(ip, clientInfoName(body), request.headers.get("user-agent") ?? undefined),
+                client: facts.client,
                 access: tool ? tool.access : "public",
                 auth: "anon",
-                country: (request as unknown as { cf?: { country?: string } }).cf?.country ?? "",
+                country: facts.country,
                 era: "legacy",
                 latencyMs,
                 count: -1,
@@ -185,62 +385,87 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
         return res;
       }
 
-      const era = (await isLegacyRequest(request).catch(() => true)) ? "legacy" as const : "modern" as const;
-      const finishes: ToolFinish[] = [];
-      const perRequest = createMcpHandler(
-        (reqCtx) => {
-          const toolCtx: ToolContext = {
-            env,
-            auth: toToolAuth(reqCtx.authInfo),
-            requestId,
-            log,
-          };
-          return buildServer(config, toolCtx, { onFinish: (f) => finishes.push(f) });
-        },
-        { legacy: "stateless" },
-      );
-      const res = await perRequest.fetch(request);
-      const bytes = await res
-        .clone()
-        .text()
-        .then((t) => new TextEncoder().encode(t).length)
-        .catch(() => -1);
-      const latencyMs = Date.now() - t0;
+      const era = await isLegacyRequest(request).catch(() => true) ? ("legacy" as const) : ("modern" as const);
+      const names = calls.map((call) => call.name);
+      const authHeader = request.headers.get("Authorization");
+      const needsAuth = needsAuthFor(config, names);
 
-      if (calls.length > 0) {
-        const name = clientInfoName(body);
-        const ua = request.headers.get("user-agent") ?? undefined;
-        const country = (request as unknown as { cf?: { country?: string } }).cf?.country ?? "";
-        const callerKey = await callerKeyFor(env.IP_HASH_SALT, null, ip).catch(() => "");
-        const remaining = [...finishes];
+      // Public call, no token: straight to the SDK, no identity.
+      if (!authHeader && !needsAuth) {
+        return serveMcp({
+          request, env, ctx, config, requestId, log, t0, ip, body, era,
+          toolAuth: null, metricAuth: "anon", userId: null,
+        });
+      }
+
+      // Private call, no token: the real 401 that makes Claude show Connect.
+      if (!authHeader && needsAuth) {
+        const res = unauthorizedResponse(publicUrl, privateScopesFor(config, names));
+        const bytes = new TextEncoder().encode(await res.clone().text()).length;
+        const latencyMs = Date.now() - t0;
         ctx.waitUntil(
           (async () => {
+            const facts = await reqFacts(env, request, body, ip, null);
             for (const call of calls) {
               const tool = config.tools.find((t) => t.name === call.name);
-              const idx = remaining.findIndex((f) => f.tool === call.name);
-              const finish = idx >= 0 ? remaining.splice(idx, 1)[0] : undefined;
               recordToolCall(env, {
-                callerKey,
+                callerKey: facts.callerKey,
                 slug: config.slug,
                 tool: tool ? tool.name : "unknown",
-                // The SDK answers isError without running execute on a schema
-                // failure (invalid_input) or an unknown tool (error).
-                status: finish ? finish.status : tool ? "invalid_input" : "error",
-                code: finish ? finish.code : tool ? "invalid_params" : "method_not_found",
-                client: clientFamily(ip, name, ua),
+                status: "unauthorized",
+                code: "",
+                client: facts.client,
                 access: tool ? tool.access : "public",
                 auth: "anon",
-                country,
+                country: facts.country,
                 era,
                 latencyMs,
-                count: finish ? finish.count : -1,
+                count: -1,
+                bytes,
+              });
+            }
+          })(),
+        );
+        log("request", { route: "mcp", method: request.method, status: 401, latencyMs });
+        return res;
+      }
+
+      // A token is present (or a public call chose to send one): the provider
+      // validates it and routes to the apiHandler above, or answers 401
+      // itself for a dead/unknown token.
+      const res = await buildProvider(providerOpts).fetch(request, env, ctx);
+      if (res.status === 401 && calls.length > 0) {
+        const bytes = await res
+          .clone()
+          .text()
+          .then((t) => new TextEncoder().encode(t).length)
+          .catch(() => -1);
+        const latencyMs = Date.now() - t0;
+        ctx.waitUntil(
+          (async () => {
+            const facts = await reqFacts(env, request, body, ip, null);
+            for (const call of calls) {
+              const tool = config.tools.find((t) => t.name === call.name);
+              recordToolCall(env, {
+                callerKey: facts.callerKey,
+                slug: config.slug,
+                tool: tool ? tool.name : "unknown",
+                status: "unauthorized",
+                code: "invalid_token",
+                client: facts.client,
+                access: tool ? tool.access : "public",
+                auth: "anon",
+                country: facts.country,
+                era,
+                latencyMs,
+                count: -1,
                 bytes,
               });
             }
           })(),
         );
       }
-      log("request", { route: "mcp", method: request.method, status: res.status, latencyMs, era });
+      log("request", { route: "mcp", method: request.method, status: res.status, latencyMs: Date.now() - t0, era });
       return res;
     }
 
@@ -258,7 +483,6 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
     }
 
     if (path === "/" && request.method === "GET") {
-      const publicUrl = (env.MCP_PUBLIC_URL as string | undefined) ?? `http://${url.host}`;
       return new Response(renderDocsPage(config, publicUrl), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
@@ -266,17 +490,17 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
 
     if (
       path === "/.well-known/oauth-protected-resource" ||
-      path === "/.well-known/oauth-protected-resource/mcp" ||
-      path === "/.well-known/oauth-authorization-server" ||
-      path === "/authorize" ||
-      path === "/token" ||
-      path === "/register" ||
-      path === "/callback"
+      path === "/.well-known/oauth-protected-resource/mcp"
     ) {
-      return json(501, { error: "not_implemented", message: "OAuth lands in phase 3" });
+      return Response.json(resourceMetadataDoc(publicUrl), {
+        headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
+      });
     }
 
-    return json(404, { error: "not_found" });
+    // OAuth discovery, registration, token and sign-in routes are the
+    // provider's (protocol endpoints) or its defaultHandler's (authorize,
+    // callback); anything else 404s there.
+    return buildProvider(providerOpts).fetch(request, env, ctx);
   }
 
   return { fetch };
