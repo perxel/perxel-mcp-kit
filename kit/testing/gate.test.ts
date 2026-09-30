@@ -24,6 +24,9 @@ import {
  */
 
 const worker = createWorker(config);
+// Any public tool that accepts no arguments stands in for "a public call", so
+// the gate tests run against whatever tools the clone defines.
+const publicTool = config.tools.find((t) => t.access === "public" && t.inputSchema.safeParse({}).success);
 let gateEnv: GateTestEnv;
 let restoreFetch: () => void;
 
@@ -85,10 +88,12 @@ const META = `${PUBLIC_URL}/.well-known/oauth-protected-resource/mcp`;
 
 describe("gate", () => {
   it("public call without token → 200", async () => {
-    const res = await postMcp(gateEnv.env, toolCallBody("get_time", { timezone: "UTC" }));
+    const res = await postMcp(gateEnv.env, toolCallBody(publicTool!.name));
     expect(res.status).toBe(200);
     const msg = await rpcResult(res);
-    expect(msg.result?.["isError"]).toBeUndefined();
+    // The gate let it through; a content-backed tool may still answer isError here (no source in the test env).
+    expect(msg.error).toBeUndefined();
+    expect(msg.result).toBeDefined();
   });
 
   it("private call without token → 401 with the exact challenge", async () => {
@@ -99,7 +104,7 @@ describe("gate", () => {
     expect(await res.json()).toEqual({ error: "unauthorized" });
     const rows = gateEnv.points.slice(before);
     expect(rows).toHaveLength(1);
-    expect(rows[0].blobs?.slice(0, 4)).toEqual(["example", "whoami", "unauthorized", ""]);
+    expect(rows[0].blobs?.slice(0, 4)).toEqual([config.slug, "whoami", "unauthorized", ""]);
     expect(rows[0].blobs?.[5]).toBe("private");
     expect(rows[0].blobs?.[6]).toBe("anon");
   });
@@ -116,7 +121,7 @@ describe("gate", () => {
   it("batch containing one private call → 401", async () => {
     const before = gateEnv.points.length;
     const res = await postMcp(gateEnv.env, [
-      toolCallBody("get_time", { timezone: "UTC" }, 1),
+      toolCallBody(publicTool!.name, {}, 1),
       toolCallBody("whoami", {}, 2),
     ]);
     expect(res.status).toBe(401);
@@ -162,9 +167,11 @@ describe("authenticated calls", () => {
   });
 
   it("public call carrying a valid token → 200", async () => {
-    const res = await postMcp(gateEnv.env, toolCallBody("get_time", { timezone: "UTC" }), authHeaders());
+    const res = await postMcp(gateEnv.env, toolCallBody(publicTool!.name), authHeaders());
     expect(res.status).toBe(200);
-    expect((await rpcResult(res)).result?.["isError"]).toBeUndefined();
+    const msg = await rpcResult(res);
+    expect(msg.error).toBeUndefined();
+    expect(msg.result).toBeDefined();
   });
 
   it("dead token → provider 401 and an unauthorized row", async () => {
