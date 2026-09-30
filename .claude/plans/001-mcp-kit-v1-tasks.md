@@ -293,5 +293,5 @@ Each task: do it, run `pnpm typecheck && pnpm test`, tick it in section 5, commi
 - [x] 3.2 gate tests
 - [x] 4.1 metrics proxy
 - [x] 4.2 dashboard
-- [ ] 5.1 README, TRANSFER, LICENSE
-- [ ] 5.2 final report, push
+- [x] 5.1 README, TRANSFER, LICENSE
+- [x] 5.2 final report, push
