@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@cloudflare/containers':
+        specifier: 0.3.7
+        version: 0.3.7
       '@cloudflare/workers-oauth-provider':
         specifier: 1.2.1
         version: 1.2.1
@@ -39,12 +42,18 @@ importers:
       wrangler:
         specifier: 4.144.0
         version: 4.144.0(@cloudflare/workers-types@5.20260930.1)(@types/node@26.6.3)
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
 packages:
 
   '@alcalzone/ansi-tokenize@0.2.5':
     resolution: {integrity: sha512-3NX/MpTdroi0aKz134A6RC2Gb2iXVECN4QaAXnvCIxxIm3C3AVB1mkUe8NaaiyvOpDfsrqWhYtj+Q6a62RrTsw==}
     engines: {node: '>=18'}
+
+  '@cloudflare/containers@0.3.7':
+    resolution: {integrity: sha512-DM9dm3FnIBSyiSJ1FLavKwl/lk3oAmTaynCzZQ9pZR0ncRPquSxkxd8Nu2MFILxmDDsPkxKsSNEh9mHHMty4Fw==}
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -1884,6 +1893,8 @@ snapshots:
     dependencies:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 5.1.0
+
+  '@cloudflare/containers@0.3.7': {}
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 

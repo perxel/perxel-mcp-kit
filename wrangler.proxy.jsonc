@@ -1,0 +1,17 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/configuration-schema.json",
+  "name": "example-metrics-proxy",
+  "main": "kit/metrics-proxy/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "vars": {
+    // Paste the 32-char account id from the Cloudflare dashboard.
+    "CF_ACCOUNT_ID": "<paste: Cloudflare account ID>"
+  }
+  // Secrets (never commit values; set with `wrangler secret put -c wrangler.proxy.jsonc <name>`):
+  //   CF_API_TOKEN: token with Account | Account Analytics | Read (account-wide:
+  //     this Worker holds the only copy; dashboards only ever see proxy keys).
+  //   PROXY_KEYS: JSON mapping dashboard keys to datasets, e.g.
+  //     {"<sha256 hex of khatra dashboard key>": "mcp_khatra"}
+  //     (hash a key with `echo -n '<key>' | sha256sum`). One entry per client.
+}

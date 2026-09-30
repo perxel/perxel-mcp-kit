@@ -13,6 +13,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@cloudflare/containers": "0.3.7",
     "@cloudflare/workers-oauth-provider": "1.2.1",
     "@modelcontextprotocol/server": "2.2.0",
     "zod": "4.6.5"
@@ -24,6 +25,7 @@
     "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vitest": "4.1.11",
-    "wrangler": "4.144.0"
+    "wrangler": "4.144.0",
+    "yaml": "2.9.1"
   }
 }
