@@ -1,8 +1,6 @@
 /**
  * Folds text for accent-insensitive matching: "Giải chạy Vũng Tàu" -> "giai chay vung tau".
- * Same approach as openrace-api's src/lib/search.ts (đ isn't a base letter plus a mark,
- * so it needs its own replace); this copy is small enough not to need the arg-summary
- * pact of staying byte-identical.
+ * Vietnamese đ isn't a base letter plus a mark, so it needs its own replace.
  */
 export function foldText(input: string): string {
   return input

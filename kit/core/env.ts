@@ -24,7 +24,7 @@ export interface Env {
   METRICS_PROXY?: Fetcher;
   /** This MCP's proxy key (secret): the proxy maps its SHA-256 to `mcp_<slug>`. */
   DASH_PROXY_KEY?: string;
-  /** Access team domain guarding the dashboard, e.g. "perxel.cloudflareaccess.com". */
+  /** Access team domain guarding the dashboard, e.g. "your-team.cloudflareaccess.com". */
   DASH_ACCESS_TEAM?: string;
   /** Application Audience (AUD) tag of the Access app protecting the dashboard path. */
   DASH_ACCESS_AUD?: string;

@@ -15,13 +15,13 @@ import { createWorker } from "./worker.js";
 import { validateQuery } from "../metrics-proxy/validate.js";
 
 const config = defineConfig({
-  slug: "perxel-demo",
+  slug: "my-demo",
   name: "Demo MCP",
   version: "1.2.3",
   description: "Test config.",
   scopes: {},
   tools: [],
-  docs: { contact: "hello@perxel.com" },
+  docs: { contact: "hello@example.com" },
 });
 
 const NOW = Date.UTC(2026, 8, 30, 12, 34, 0);
@@ -65,7 +65,7 @@ async function withJwks<T>(jwk: JsonWebKey, fn: () => Promise<T>): Promise<{ res
   }
 }
 
-const TEAM = "perxel.cloudflareaccess.com";
+const TEAM = "your-team.cloudflareaccess.com";
 const AUD = "aud-tag-123";
 
 describe("dashPathFor", () => {
@@ -91,13 +91,13 @@ describe("dashPathFor", () => {
 
 describe("dashQueries", () => {
   it("uses the slug's dataset", () => {
-    expect(datasetFor("perxel-demo")).toBe("mcp_perxel_demo");
+    expect(datasetFor("my-demo")).toBe("mcp_my_demo");
   });
 
   it.each(Object.keys(DASH_RANGES) as DashRange[])("every %s query passes the proxy validator for its own dataset only", (range) => {
-    const queries = dashQueries("mcp_perxel_demo", range);
+    const queries = dashQueries("mcp_my_demo", range);
     for (const [id, sql] of Object.entries(queries)) {
-      expect(validateQuery(sql, "mcp_perxel_demo"), id).toEqual({ ok: true });
+      expect(validateQuery(sql, "mcp_my_demo"), id).toEqual({ ok: true });
       expect(validateQuery(sql, "mcp_other").ok, id).toBe(false);
       expect(sql, id).toContain(`INTERVAL '${DASH_RANGES[range].hours}' HOUR`);
       expect(sql, id).toMatch(/FORMAT JSON$/);
@@ -108,7 +108,7 @@ describe("dashQueries", () => {
 });
 
 describe("checkDashAccess", () => {
-  const req = (headers: Record<string, string> = {}) => new Request("https://mcp.perxel.com/dash/", { headers });
+  const req = (headers: Record<string, string> = {}) => new Request("https://mcp.example.com/dash/", { headers });
 
   it("lets localhost through for wrangler dev", async () => {
     const res = await checkDashAccess(new Request("http://localhost:8788/dash/"), {} as Env, NOW);
@@ -121,7 +121,7 @@ describe("checkDashAccess", () => {
   });
 
   it("does not skip the check for a real public URL", async () => {
-    const env = { MCP_PUBLIC_URL: "https://mcp.perxel.com", DASH_ACCESS_TEAM: TEAM, DASH_ACCESS_AUD: AUD } as unknown as Env;
+    const env = { MCP_PUBLIC_URL: "https://mcp.example.com", DASH_ACCESS_TEAM: TEAM, DASH_ACCESS_AUD: AUD } as unknown as Env;
     expect(((await checkDashAccess(req(), env, NOW)) as Response).status).toBe(403);
   });
 
@@ -139,10 +139,10 @@ describe("checkDashAccess", () => {
 
   it("accepts a valid assertion and returns the email", async () => {
     const { jwk, sign } = await accessKeys();
-    const token = await sign({ aud: [AUD], iss: `https://${TEAM}`, exp: NOW / 1000 + 600, email: "phuc@perxel.com" });
+    const token = await sign({ aud: [AUD], iss: `https://${TEAM}`, exp: NOW / 1000 + 600, email: "viewer@example.com" });
     const env = { DASH_ACCESS_TEAM: `https://${TEAM}/`, DASH_ACCESS_AUD: AUD } as unknown as Env;
     const { result, urls } = await withJwks(jwk, () => checkDashAccess(req({ "Cf-Access-Jwt-Assertion": token }), env, NOW));
-    expect(result).toEqual({ viewer: "phuc@perxel.com" });
+    expect(result).toEqual({ viewer: "viewer@example.com" });
     expect(urls).toEqual([`https://${TEAM}/cdn-cgi/access/certs`]);
   });
 
@@ -233,7 +233,7 @@ describe("handleDash", () => {
     const html = await res.text();
     expect(seen).toHaveLength(8);
     expect(seen.every((s) => s.auth === "Bearer k-123")).toBe(true);
-    expect(seen.every((s) => s.sql.includes("FROM mcp_perxel_demo") && s.sql.includes("INTERVAL '24' HOUR"))).toBe(true);
+    expect(seen.every((s) => s.sql.includes("FROM mcp_my_demo") && s.sql.includes("INTERVAL '24' HOUR"))).toBe(true);
     expect(html).toContain("120"); // calls tile
     expect(html).toContain("5.0%"); // 6 / 120
     expect(html).toContain("88 ms");
@@ -262,11 +262,11 @@ describe("handleDash", () => {
 
 describe("worker routing", () => {
   const ctx = { waitUntil: () => {}, passThroughOnException: () => {} } as unknown as ExecutionContext;
-  const baseEnv = { MCP_PUBLIC_URL: "https://mcp.perxel.com" };
+  const baseEnv = { MCP_PUBLIC_URL: "https://mcp.example.com" };
 
   it("serves the dashboard at /dash by default and fails closed on the public host", async () => {
     const worker = createWorker(config);
-    const res = await worker.fetch(new Request("https://mcp.perxel.com/dash/"), baseEnv as unknown as Env, ctx);
+    const res = await worker.fetch(new Request("https://mcp.example.com/dash/"), baseEnv as unknown as Env, ctx);
     expect(res.status).toBe(503);
   });
 

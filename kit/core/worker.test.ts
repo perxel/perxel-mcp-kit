@@ -47,7 +47,7 @@ const config = defineConfig({
   description: "Test config.",
   scopes: {},
   tools: [okTool, badTool, boomTool],
-  docs: { contact: "hello@perxel.com" },
+  docs: { contact: "hello@example.com" },
 });
 
 interface FakeAE {
@@ -59,7 +59,7 @@ function fakeEnv(overrides: Record<string, unknown> = {}): { env: Env; points: A
   const rateKeys: string[] = [];
   const anthropicKeys: string[] = [];
   const env = {
-    MCP_PUBLIC_URL: "https://mcp.perxel.com",
+    MCP_PUBLIC_URL: "https://mcp.example.com",
     IP_HASH_SALT: "test-salt",
     METRICS: { writeDataPoint: (p?: AnalyticsEngineDataPoint) => void points.push(p!) },
     RATE_LIMITER: {
@@ -96,7 +96,7 @@ async function callTool(
   ip = "1.2.3.4",
 ) {
   const res = await worker.fetch(
-    new Request("https://mcp.perxel.com/mcp", {
+    new Request("https://mcp.example.com/mcp", {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -250,7 +250,7 @@ describe("/health", () => {
     const worker = createWorker(config);
     const { env } = fakeEnv();
     const { ctx } = fakeCtx();
-    const res = await worker.fetch(new Request("https://mcp.perxel.com/health"), env, ctx);
+    const res = await worker.fetch(new Request("https://mcp.example.com/health"), env, ctx);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       ok: true,
@@ -268,7 +268,7 @@ describe("/health", () => {
     });
     const { env } = fakeEnv();
     const { ctx } = fakeCtx();
-    const res = await worker.fetch(new Request("https://mcp.perxel.com/health"), env, ctx);
+    const res = await worker.fetch(new Request("https://mcp.example.com/health"), env, ctx);
     expect(res.status).toBe(503);
     expect(((await res.json()) as Record<string, unknown>)["ok"]).toBe(false);
   });
@@ -287,7 +287,7 @@ describe("/health", () => {
     const worker = createWorker(config, { sources: { content: live } });
     const { env } = fakeEnv();
     const { ctx } = fakeCtx();
-    const res = await worker.fetch(new Request("https://mcp.perxel.com/health"), env, ctx);
+    const res = await worker.fetch(new Request("https://mcp.example.com/health"), env, ctx);
     expect(loads).toBe(1);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { sources: Record<string, SourceStatus> }).sources.content.from).toBe("kv-fallback");
@@ -303,7 +303,7 @@ describe("/health", () => {
     const worker = createWorker(config, { sources: { content: live } });
     const { env } = fakeEnv();
     const { ctx } = fakeCtx();
-    const res = await worker.fetch(new Request("https://mcp.perxel.com/health"), env, ctx);
+    const res = await worker.fetch(new Request("https://mcp.example.com/health"), env, ctx);
     expect(res.status).toBe(503);
   });
 });
@@ -313,13 +313,13 @@ describe("docs page", () => {
     const worker = createWorker(exampleConfig);
     const { env } = fakeEnv();
     const { ctx } = fakeCtx();
-    const res = await worker.fetch(new Request("https://mcp.perxel.com/"), env, ctx);
+    const res = await worker.fetch(new Request("https://mcp.example.com/"), env, ctx);
     expect(res.status).toBe(200);
     const html = await res.text();
     for (const tool of exampleConfig.tools) {
       expect(html).toContain(tool.name);
     }
-    expect(html).toContain("https://mcp.perxel.com/mcp");
+    expect(html).toContain("https://mcp.example.com/mcp");
     expect(html).toContain("Add custom connector");
   });
 });

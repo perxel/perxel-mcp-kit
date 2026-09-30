@@ -1,9 +1,8 @@
 # Perxel MCP Kit
 
 A public template for building a remote MCP server plus its monitoring
-dashboard, 100% on Cloudflare Workers. Perxel sells MCP setup and hosting as
-a service; this kit is the single source of truth every Perxel-built MCP
-follows. See `STANDARD.md` for the checklist.
+dashboard, 100% on Cloudflare Workers. Every MCP built from it follows the
+same checklist: see `STANDARD.md`.
 
 Source-available under the PolyForm Shield 1.0.0 license (`LICENSE`): free
 to use and modify, not to resell or offer as a competing service. This is
@@ -42,7 +41,7 @@ separate dashboard host, no hosted Inspector.
 
 | Hostname | Worker | Notes |
 |---|---|---|
-| `<host>`, e.g. `mcp.perxel.com` or `khatra-mcp.perxel.com` | the MCP Worker | Attached as a Workers **Custom Domain** from `routes` in `wrangler.mcp.jsonc`; `wrangler deploy` creates the DNS record and certificate. Use a one-level subdomain of `perxel.com` (covered by the free `*.perxel.com` certificate). |
+| `<host>`, e.g. `mcp.example.com` or `docs-mcp.example.com` | the MCP Worker | Attached as a Workers **Custom Domain** from `routes` in `wrangler.mcp.jsonc`; `wrangler deploy` creates the DNS record and certificate. Use a one-level subdomain of a zone in your account (covered by the free Universal SSL certificate; `a.b.example.com` needs a paid Advanced Certificate). |
 
 That's the only hostname. `workers_dev` and `preview_urls` are off on both
 Workers, so nothing is reachable any other way.
@@ -70,7 +69,7 @@ the Access app's path to match.
 
 Why a separate proxy at all: an Analytics Engine token can't be scoped to one
 dataset. If every MCP Worker held it, one compromised MCP could read every
-client's metrics. With the proxy, an MCP Worker holds only its own key, which
+other MCP's metrics. With the proxy, an MCP Worker holds only its own key, which
 can only read `mcp_<slug>`.
 
 ### Cloudflare Access (Zero Trust)
@@ -78,10 +77,10 @@ can only read `mcp_<slug>`.
 | Access app | Type | Count | Used for |
 |---|---|---|---|
 | MCP sign-in | **SaaS, OIDC**. Redirect URI `https://<host>/callback`; login method: email one-time PIN (or another IdP) | one per MCP | Signing in users of private tools. Gives the five `ACCESS_*` secrets. |
-| Dashboard | **Self-hosted**, domain `<host>`, path `dash` | one per MCP | Who can open `/dash`. Policy: allow the staff and client emails that should see metrics. Its **AUD tag** goes in `DASH_ACCESS_AUD`. |
+| Dashboard | **Self-hosted**, domain `<host>`, path `dash` | one per MCP | Who can open `/dash`. Policy: allow the emails that should see metrics. Its **AUD tag** goes in `DASH_ACCESS_AUD`. |
 
-Seats: staff logins and dashboard viewers share Zero Trust's 50 free users
-across all clients, then about $7/user/month.
+Seats: sign-in users and dashboard viewers share Zero Trust's 50 free users
+across all MCPs in the account, then about $7/user/month.
 
 ### What is deliberately *not* deployed
 
@@ -94,10 +93,10 @@ across all clients, then about $7/user/month.
   `pnpm dev` (against local) or `pnpm inspect https://<host>/mcp --allow-remote`
   (against production, on purpose).
 - **Grafana.** Earlier versions ran Grafana in a Cloudflare Container on
-  `dash.perxel.com/<slug>`: one more Worker and a container per MCP, cold
+  a separate dashboard host: one more Worker and a container per MCP, cold
   starts, and a Docker build. A fixed set of panels covers "is this MCP
-  healthy and used", so the dashboard is now part of the MCP Worker. If a
-  client really wants ad-hoc querying, Grafana is an add-on pointed at the
+  healthy and used", so the dashboard is now part of the MCP Worker. If you
+  really want ad-hoc querying, Grafana is an add-on pointed at the
   same proxy (give the proxy a URL only for that case).
 - **Cloudflare Pages.** Nothing here is a static site. Cloudflare also steers
   new projects to Workers (with static assets) rather than Pages.
@@ -110,7 +109,7 @@ across all clients, then about $7/user/month.
 
 ### Costs (checked 2026-09-30)
 
-- Workers Paid, $5/month per account: covers every MCP and the proxy at small-client scale (10M requests, 30M CPU-ms included).
+- Workers Paid, $5/month per account: covers every MCP and the proxy at small scale (10M requests, 30M CPU-ms included).
 - Zero Trust: 50 free seats shared, then about $7/user/month.
 - No container cost.
 - LLM tokens are paid by the user's Claude subscription, not by the MCP.
@@ -135,14 +134,14 @@ wrangler.proxy.jsonc the metrics proxy (one per account)
 ## Create a new MCP from the template
 
 1. **Use the template.** On GitHub: Use this template → create your repo
-   (e.g. `perxel-mcp`, `khatra-mcp`), then clone it.
+   (e.g. `docs-mcp`, `shop-mcp`), then clone it.
 2. **Install.** `pnpm install` (Node 22, pnpm 10.22.0).
 3. **Set `mcp.config.ts`.** `slug` (`[a-z0-9-]`; gives the dataset
    `mcp_<slug>` with `-` → `_`), `name`, `version`, `description`, `scopes`
    (every private tool's scope must be listed), and the `tools` list.
 4. **Set `wrangler.mcp.jsonc`.** `name` (`<slug>-mcp`), the `routes` pattern
-   and `MCP_PUBLIC_URL` (same host, e.g. `mcp.perxel.com` and
-   `https://mcp.perxel.com`), the dataset name, unique rate-limiter
+   and `MCP_PUBLIC_URL` (same host, e.g. `mcp.example.com` and
+   `https://mcp.example.com`), the dataset name, unique rate-limiter
    `namespace_id`s, and `CONTENT_URL` if you use a static source. Copy
    `.dev.vars.example` to `.dev.vars` for local dev.
 5. **Write tools.** Add files in `src/tools/` with `defineTool` from
@@ -165,10 +164,10 @@ wrangler.proxy.jsonc the metrics proxy (one per account)
 
 ### Content source (static JSON)
 
-For a site-backed MCP (e.g. `perxel-mcp` over perxel.com), the site publishes
+For a site-backed MCP (e.g. an MCP over your own website), the site publishes
 one JSON file at build time and the MCP reads it:
 
-- The file must be at a **public URL** (e.g. `https://perxel.com/content.json`),
+- The file must be at a **public URL** (e.g. `https://example.com/content.json`),
   set as `CONTENT_URL`. The Worker has no filesystem, so a file in the repo
   isn't read at runtime.
 - Recommended shape and search rules: `STANDARD.md` → "Static JSON source".
@@ -220,7 +219,7 @@ yourself first (it opens a browser).
 
 ### Once per Cloudflare account (the first MCP does this)
 
-1. **Workers Paid plan** ($5/month). Don't run clients on free (its 10 ms CPU cap per request is a real risk).
+1. **Workers Paid plan** ($5/month). Don't run production on free (its 10 ms CPU cap per request is a real risk).
 2. **Analytics Engine read token** (dashboard → My Profile → API Tokens →
    Create: *Account → Account Analytics → Read*, this account only).
 3. **Metrics proxy.** Set `CF_ACCOUNT_ID` in `wrangler.proxy.jsonc`, then:
@@ -298,6 +297,6 @@ pnpm kit:update [ref] [--from <local path>]
   `package.json` scripts) are listed in that release's commit message; copy
   those changes by hand.
 
-## Transferring to a client's account
+## Transferring to another Cloudflare account
 
 See `TRANSFER.md`.

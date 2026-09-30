@@ -14,19 +14,19 @@
   "preview_urls": false,
   // Custom domain: DNS record + certificate are created on `wrangler deploy`.
   // Must match MCP_PUBLIC_URL below. Change per MCP.
-  "routes": [{ "pattern": "example-mcp.perxel.com", "custom_domain": true }],
+  "routes": [{ "pattern": "mcp.example.com", "custom_domain": true }],
 
   "vars": {
     // Exactly https://<custom domain>. OAuth `resource` must equal the URL users
     // paste (plus /mcp). `.dev.vars` overrides this with http://localhost:8788.
-    "MCP_PUBLIC_URL": "https://example-mcp.perxel.com",
+    "MCP_PUBLIC_URL": "https://mcp.example.com",
     // Static JSON source, only when a tool uses kit/core/static-source.ts:
     // a public URL the site publishes at build time (README "Content source").
     // "CONTENT_URL": "https://example.com/content.json",
     // Dashboard mount path on this Worker ("off" disables it).
     "DASH_PATH": "/dash",
     // Access team domain (Zero Trust → Settings → Custom Pages / team name),
-    // e.g. "perxel.cloudflareaccess.com". Shared by every MCP in the account.
+    // e.g. "your-team.cloudflareaccess.com". Shared by every MCP in the account.
     "DASH_ACCESS_TEAM": "<paste: <team>.cloudflareaccess.com>",
     // Application Audience (AUD) tag of the Access app protecting
     // <host>/dash (Access → Applications → the app → Overview). Per MCP.

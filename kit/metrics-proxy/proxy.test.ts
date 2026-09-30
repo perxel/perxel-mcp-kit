@@ -103,7 +103,7 @@ describe("metrics proxy forwarding", () => {
     const upstream = vi.fn(async (_url: string, _init?: RequestInit): Promise<Response> => new Response("must not happen", { status: 200 }));
     vi.stubGlobal("fetch", upstream);
     const res = await worker.fetch(
-      get(`SELECT blob2 FROM mcp_khatra WHERE $timeFilter`, authed()),
+      get(`SELECT blob2 FROM mcp_other WHERE $timeFilter`, authed()),
       env(),
     );
     expect(res.status).toBe(403);

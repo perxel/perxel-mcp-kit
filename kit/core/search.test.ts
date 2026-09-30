@@ -42,7 +42,7 @@ function item(overrides: Partial<StaticItem> & { slug: string }): StaticItem {
     type: "insight",
     title: "Untitled",
     excerpt: "No excerpt.",
-    url: `https://example.perxel.com/${overrides.slug}`,
+    url: `https://example.com/${overrides.slug}`,
     category: "misc",
     date: null,
     tags: [],

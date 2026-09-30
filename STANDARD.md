@@ -1,13 +1,13 @@
-# Perxel MCP Standard (SSOT)
+# MCP Standard (SSOT)
 
-Every Perxel-built MCP follows this checklist. The kit enforces it; clones inherit it via `pnpm kit:update`.
+Every MCP built from this kit follows this checklist. The kit enforces it; clones inherit it via `pnpm kit:update`.
 
 ## Protocol
 
 - `@modelcontextprotocol/server` v2, spec 2026-07-28, stateless (`createMcpHandler`), with the default fallback for 2025-era clients.
 - MCP endpoint is `POST /mcp` on the Worker's custom domain; `GET`/`DELETE /mcp` answer 405 (SDK default).
 - `GET /` is a docs page generated from the tool definitions; `GET /health` reports version and source status.
-- The MCP URL users paste is `https://<host>/mcp`; one-level subdomains on `perxel.com` (covered by the free `*.perxel.com` certificate).
+- The MCP URL users paste is `https://<host>/mcp`; one-level subdomains of a zone in your account (covered by the free Universal SSL certificate).
 - Infrastructure per MCP: one Worker on one custom domain (`/mcp`, `/`, `/health`, OAuth, `/dash`); per account: one shared metrics-proxy Worker with no public URL. `workers_dev` and `preview_urls` stay off. No containers, no hosted Inspector (README → Infrastructure).
 
 ## Tools and token rules
@@ -39,7 +39,7 @@ Every Perxel-built MCP follows this checklist. The kit enforces it; clones inher
 - 600/min shared bucket for Anthropic's cloud range `160.79.104.0/21` (claude.ai calls from a few IPs on behalf of many users; a per-IP limit alone is wrong).
 - Over the limit: HTTP 429, `Retry-After: 60`, JSON-RPC error `-32000`.
 - Rate-limiter `namespace_id`s are unique per Cloudflare account: change per MCP.
-- Run clients on Workers Paid, not free (the free 10 ms CPU cap per request is a real risk).
+- Run production on Workers Paid, not free (the free 10 ms CPU cap per request is a real risk).
 
 ## Static JSON source
 
@@ -98,8 +98,8 @@ Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `to
 
 ## Costs (checked 2026-09-30)
 
-- Workers Paid $5/month: 10M requests then $0.30/M, 30M CPU-ms then $0.02/M. Covers the MCPs, KV and the proxy at small-client scale. No containers.
-- Zero Trust: 50 free users shared across all clients (staff logins plus dashboard viewers), then ~$7/user/month. Keep a margin over $84/user/year past 50 total.
+- Workers Paid $5/month: 10M requests then $0.30/M, 30M CPU-ms then $0.02/M. Covers the MCPs, KV and the proxy at small scale. No containers.
+- Zero Trust: 50 free users shared across all MCPs in the account (sign-in users plus dashboard viewers), then ~$7/user/month.
 - LLM tokens are paid by the user's AI subscription, not by the MCP. An on-site chatbot is a separate product with its own token cost.
 
 ## Dev rules
@@ -109,4 +109,4 @@ Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `to
 - The MCP Inspector is a local dev tool only (it's a Node app with an open fetch proxy); never deploy it.
 - Clones never edit `kit/`; kit changes land via `pnpm kit:update`.
 - Pinned versions only; the installed `.d.ts` types win over any doc when an API name differs.
-- Don't touch other repos (`perxel-web-2026`, `openrace-mcp`, `openwallet-mcp`) without asking.
+- Don't touch other repos from an MCP repo without asking.

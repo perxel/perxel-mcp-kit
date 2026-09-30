@@ -41,9 +41,9 @@ describe("whoami", () => {
   it("returns the user id and email from ctx.auth", async () => {
     const result = await whoamiTool.execute(
       {},
-      ctx({ userId: "user-123", email: "a@perxel.com", scopes: ["private:read"] }),
+      ctx({ userId: "user-123", email: "a@example.com", scopes: ["private:read"] }),
     );
-    expect(result.data).toEqual({ userId: "user-123", email: "a@perxel.com" });
+    expect(result.data).toEqual({ userId: "user-123", email: "a@example.com" });
   });
 
   it("fails without auth", async () => {

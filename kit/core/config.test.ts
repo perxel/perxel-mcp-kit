@@ -36,7 +36,7 @@ function baseConfig(overrides: Record<string, unknown> = {}) {
     description: "Example.",
     scopes: { "private:read": "Read private example data" },
     tools: [publicTool],
-    docs: { contact: "hello@perxel.com" },
+    docs: { contact: "hello@example.com" },
     ...overrides,
   } as Parameters<typeof defineConfig>[0];
 }

@@ -7,12 +7,12 @@ describe("pnpm inspect args", () => {
   });
 
   it("refuses a remote URL without --allow-remote", () => {
-    expect(parseInspectArgs(["https://mcp.perxel.com/mcp"])).toHaveProperty("error");
-    expect(parseInspectArgs(["https://mcp.perxel.com/mcp", "--allow-remote"])).toEqual({ url: "https://mcp.perxel.com/mcp" });
+    expect(parseInspectArgs(["https://mcp.example.com/mcp"])).toHaveProperty("error");
+    expect(parseInspectArgs(["https://mcp.example.com/mcp", "--allow-remote"])).toEqual({ url: "https://mcp.example.com/mcp" });
   });
 
   it("wants the /mcp endpoint, not the site root", () => {
-    expect(parseInspectArgs(["https://mcp.perxel.com", "--allow-remote"])).toHaveProperty("error");
+    expect(parseInspectArgs(["https://mcp.example.com", "--allow-remote"])).toHaveProperty("error");
     expect(parseInspectArgs(["not a url"])).toHaveProperty("error");
   });
 });

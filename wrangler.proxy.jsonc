@@ -19,7 +19,7 @@
   //   CF_API_TOKEN: token with Account | Account Analytics | Read (account-wide:
   //     this Worker holds the only copy; MCP Workers only ever see proxy keys).
   //   PROXY_KEYS: JSON mapping each MCP's DASH_PROXY_KEY to its dataset, e.g.
-  //     {"<sha256 hex of perxel key>": "mcp_perxel", "<sha256 hex of khatra key>": "mcp_khatra"}
+  //     {"<sha256 hex of first key>": "mcp_first", "<sha256 hex of second key>": "mcp_second"}
   //     (hash a key with `printf %s '<key>' | shasum -a 256`). One entry per MCP;
   //     `secret put` replaces the whole value, so always paste the full map.
 }

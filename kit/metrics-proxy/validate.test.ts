@@ -27,7 +27,7 @@ describe("validateQuery", () => {
   });
 
   it("rejects another dataset", () => {
-    expect(validateQuery(ALLOWED.replace(DS, "mcp_khatra"), DS)).toEqual({
+    expect(validateQuery(ALLOWED.replace(DS, "mcp_other"), DS)).toEqual({
       ok: false,
       reason: "dataset_forbidden",
     });

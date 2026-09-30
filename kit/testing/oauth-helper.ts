@@ -16,7 +16,7 @@ if (typeof g["Cloudflare"] !== "object" || g["Cloudflare"] === null) {
   g["Cloudflare"] = { compatibilityFlags: { global_fetch_strictly_public: true } };
 }
 
-export const TEST_PUBLIC_URL = "https://mcp.perxel.com";
+export const TEST_PUBLIC_URL = "https://mcp.example.com";
 export const TEST_REDIRECT_URI = "http://localhost:54321/callback";
 export const TEST_ACCESS_SUB = "test-user";
 export const TEST_ACCESS_EMAIL = "tester@example.com";
