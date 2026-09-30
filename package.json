@@ -1,0 +1,29 @@
+{
+  "name": "perxel-mcp-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.22.0",
+  "scripts": {
+    "dev": "echo '' && echo '  MCP Inspector -> http://localhost:8002' && echo '' && (CLIENT_PORT=8002 pnpm exec @modelcontextprotocol/inspector --transport http --server-url http://localhost:8788/mcp &) && wrangler dev -c wrangler.mcp.jsonc --port 8788",
+    "typecheck": "tsc",
+    "test": "vitest run",
+    "eval": "tsx kit/testing/eval.ts",
+    "kit:update": "tsx kit/update/update.ts",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "1.2.1",
+    "@modelcontextprotocol/server": "2.2.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260930.1",
+    "@modelcontextprotocol/inspector": "2.8.0",
+    "@types/node": "26.6.3",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11",
+    "wrangler": "4.144.0"
+  }
+}

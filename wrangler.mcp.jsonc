@@ -1,0 +1,32 @@
+{
+  "$schema": "https://developers.cloudflare.com/workers/wrangler/configuration-schema.json",
+  "name": "example-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "vars": {
+    "MCP_PUBLIC_URL": "http://localhost:8788"
+  },
+  // KV ids are placeholders: run `wrangler kv namespace create OAUTH_KV`
+  // (and `CONTENT_KV`) and paste the ids here.
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "<run: wrangler kv namespace create OAUTH_KV>" },
+    { "binding": "CONTENT_KV", "id": "<run: wrangler kv namespace create CONTENT_KV>" }
+  ],
+  "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "mcp_example" }],
+  // namespace_ids must be unique per Cloudflare account — change per MCP.
+  "ratelimits": [
+    {
+      "name": "RATE_LIMITER",
+      // change per MCP: unique in the account
+      "namespace_id": "1001",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "RATE_LIMITER_ANTHROPIC",
+      // change per MCP: unique in the account
+      "namespace_id": "1002",
+      "simple": { "limit": 600, "period": 60 }
+    }
+  ]
+}
