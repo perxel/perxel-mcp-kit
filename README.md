@@ -54,7 +54,7 @@ Workers, so nothing is reachable any other way.
 | `/` | Docs page generated from the tool list, with connect steps. | Public |
 | `/health` | `{ok, name, slug, version, kit, sources}`; 503 when a required source can't load. | Public |
 | `/.well-known/oauth-*`, `/authorize`, `/callback`, `/token`, `/register` | OAuth 2.1 (discovery, DCR/CIMD, PKCE, refresh), sign-in via Cloudflare Access for SaaS (OIDC). | Public (it's the OAuth flow) |
-| `/dash` (`DASH_PATH`) | Monitoring dashboard: calls by status, latency p50/p95, per-tool table, clients, auth split, countries, top problems; 24h / 7d / 30d / 90d. Server-rendered HTML + SVG, no client JS. | **Access-protected**: a Cloudflare Access app on `<host>/dash` signs you in at the edge, and the Worker re-verifies the `Cf-Access-Jwt-Assertion` (signature, audience, issuer, expiry). Not configured → 503; no or bad token → 403. |
+| `/dash` (`DASH_PATH`) | Monitoring dashboard: calls by status, latency p50/p95, per-tool table, clients, auth split, countries, top problems; 24h / 7d / 30d / 90d. Server-rendered HTML + SVG, no client JS. | **Access-protected**: a Cloudflare Access app on `<host>/dash` signs you in at the edge, and the Worker re-verifies the `Cf-Access-Jwt-Assertion` (signature, audience, issuer, expiry). Not configured → 503; no or bad token → 403. Optional public demo: `DASH_PUBLIC="true"` (see [Public dashboard](#public-dashboard-demo)). |
 
 `DASH_PATH` is configurable (`/dash` default, any path like `/ops/metrics`,
 or `off`). It can't be `/` or shadow an MCP route. If you change it, change
@@ -77,7 +77,7 @@ can only read `mcp_<slug>`.
 | Access app | Type | Count | Used for |
 |---|---|---|---|
 | MCP sign-in | **SaaS, OIDC**. Redirect URI `https://<host>/callback`; login method: email one-time PIN (or another IdP) | one per MCP | Signing in users of private tools. Gives the five `ACCESS_*` secrets. |
-| Dashboard | **Self-hosted**, domain `<host>`, path `dash` | one per MCP | Who can open `/dash`. Policy: allow the emails that should see metrics. Its **AUD tag** goes in `DASH_ACCESS_AUD`. |
+| Dashboard | **Self-hosted**, domain `<host>`, path `dash` | one per MCP (none when `DASH_PUBLIC` is `"true"`) | Who can open `/dash`. Policy: allow the emails that should see metrics. Its **AUD tag** goes in `DASH_ACCESS_AUD`. |
 
 Seats: sign-in users and dashboard viewers share Zero Trust's 50 free users
 across all MCPs in the account, then about $7/user/month.
@@ -248,7 +248,7 @@ drives wrangler with the same key, so no `wrangler login` is needed. It does:
 | Account | Finds the account; fills `CF_ACCOUNT_ID` in `wrangler.proxy.jsonc` |
 | Zero Trust | Reads the team domain into `DASH_ACCESS_TEAM` |
 | Access policy | Creates (or reuses) one reusable *allow* policy for the emails |
-| Access apps | Creates the SaaS OIDC sign-in app (`https://<host>/callback`) and the self-hosted dashboard app (`<host>/dash`), attaches the policy, fills `DASH_ACCESS_AUD` |
+| Access apps | Creates the SaaS OIDC sign-in app (`https://<host>/callback`) and the self-hosted dashboard app (`<host>/dash`), attaches the policy, fills `DASH_ACCESS_AUD`. With `DASH_PUBLIC="true"` it skips the dashboard app (and warns if one still exists) |
 | KV | Creates `<worker>-OAUTH_KV` and `<worker>-CONTENT_KV`, fills their ids |
 | Rate limits | Picks `namespace_id`s no other Worker in the account uses |
 | Metrics proxy | Deploys `mcp-metrics-proxy` if absent; creates the Analytics Read token and sets `CF_API_TOKEN` |
@@ -329,6 +329,22 @@ login` first (it opens a browser).
 | `CF_ACCOUNT_ID` | var | `wrangler.proxy.jsonc` | dashboard account id |
 | `CF_API_TOKEN` | secret | proxy | Account Analytics Read token |
 | `PROXY_KEYS` | secret | proxy | `{"<sha256 of each MCP's key>": "mcp_<slug>", ...}` |
+
+## Public dashboard demo
+
+By default `/dash` is private (Access, above). To show it off as a live demo
+with no sign-in, opt in per MCP:
+
+1. `wrangler.mcp.jsonc` vars: `"DASH_PUBLIC": "true"` (any other value keeps it private).
+2. Delete the dashboard Access app on `<host>/dash` (Zero Trust → Access →
+   Applications), or `/dash` still asks for a login. `setup:cloudflare` skips
+   creating it and warns if it exists.
+3. `wrangler deploy -c wrangler.mcp.jsonc`.
+
+Everything on the dashboard becomes world-readable (call counts, clients,
+countries, tool names, problems), so only do this for an MCP whose usage you
+are happy to show. The sign-in app for private tools is unaffected. To go
+private again, remove the var and re-run `pnpm setup:cloudflare`.
 
 ## `kit:update`
 
