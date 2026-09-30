@@ -28,5 +28,7 @@ export interface Env {
   DASH_ACCESS_TEAM?: string;
   /** Application Audience (AUD) tag of the Access app protecting the dashboard path. */
   DASH_ACCESS_AUD?: string;
+  /** "true" serves the dashboard without an Access sign-in (public demo). Anything else keeps it behind Access. */
+  DASH_PUBLIC?: string;
   [key: string]: unknown;
 }

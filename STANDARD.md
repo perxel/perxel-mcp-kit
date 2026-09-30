@@ -87,7 +87,7 @@ Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `to
 - Workers Logs: structured JSON lines (`console.log(JSON.stringify(...))`), no personal data, no tool arguments.
 - `/health` returns `{ok, name, slug, version, kit, sources}`, loading each live source first; `ok` is false (HTTP 503) only when a required source is `empty`. Each source reports where its copy came from (`memory`, `fetch` or `kv-fallback`) so a stale fallback is visible.
 - Dashboard served by the MCP Worker at `DASH_PATH` (default `/dash`, `off` disables): fixed panels over the metrics row, server-rendered, no client JS. Its SQL is built in `kit/core/dash.ts`, never taken from the request.
-- The dashboard is private twice over: a Cloudflare Access self-hosted app on `<host>/dash`, and the Worker re-verifying the `Cf-Access-Jwt-Assertion` (signature, `DASH_ACCESS_AUD`, issuer, expiry). Missing config fails closed (503); only local dev (localhost `MCP_PUBLIC_URL`) skips it.
+- The dashboard is private twice over: a Cloudflare Access self-hosted app on `<host>/dash`, and the Worker re-verifying the `Cf-Access-Jwt-Assertion` (signature, `DASH_ACCESS_AUD`, issuer, expiry). Missing config fails closed (503); only local dev (localhost `MCP_PUBLIC_URL`) skips it. Opt-out for a public demo: `DASH_PUBLIC="true"` serves `/dash` with no sign-in (delete the Access app too; setup skips it). Anything else keeps it private.
 - Data reaches the dashboard only through the account's metrics proxy (service binding `METRICS_PROXY`), which holds the only Analytics Engine token and scopes each MCP's `DASH_PROXY_KEY` to its own dataset.
 
 ## Tests

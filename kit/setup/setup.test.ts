@@ -50,6 +50,7 @@ describe("readMcpConfig", () => {
       contentKvId: "abc123",
       team: "<paste: team>",
       aud: "<paste: aud>",
+      dashPublic: false,
       namespaceIds: ["1001", "1002"],
     });
   });

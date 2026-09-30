@@ -322,6 +322,7 @@ login` first (it opens a browser).
 | `DASH_PATH` | var | `wrangler.mcp.jsonc` | `/dash` default, or `off` |
 | `DASH_ACCESS_TEAM` | var | `wrangler.mcp.jsonc` | Zero Trust team domain (per account) |
 | `DASH_ACCESS_AUD` | var | `wrangler.mcp.jsonc` | AUD tag of the `/dash` Access app (per MCP) |
+| `DASH_PUBLIC` | var | `wrangler.mcp.jsonc` | Optional. `"true"` opens `/dash` with no sign-in (public demo, per MCP); leave it out to keep Access. Metrics become world-readable. `setup:cloudflare` then skips the dashboard Access app |
 | `IP_HASH_SALT`, `COOKIE_ENCRYPTION_KEY` | secret | MCP | random |
 | `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET`, `ACCESS_TOKEN_URL`, `ACCESS_AUTHORIZATION_URL`, `ACCESS_JWKS_URL` | secret | MCP | the Access SaaS/OIDC app |
 | `DASH_PROXY_KEY` | secret | MCP | random; its hash goes in `PROXY_KEYS` |
