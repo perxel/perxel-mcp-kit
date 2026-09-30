@@ -40,6 +40,21 @@ Every Perxel-built MCP follows this checklist. The kit enforces it; clones inher
 - Rate-limiter `namespace_id`s are unique per Cloudflare account: change per MCP.
 - Run clients on Workers Paid, not free (the free 10 ms CPU cap per request is a real risk).
 
+## Static JSON source
+
+- One JSON file generated at site build time (listed items only, body as plain text), re-checked on a ~10 min interval with conditional requests.
+- Loading order per Worker instance (`kit/core/static-source.ts`): fresh memory → conditional fetch (`If-None-Match`; a 304 keeps memory) → stale memory → KV last-good copy → clear error. KV is written only when the ETag or body hash changed.
+- Recommended shape (`kit/core/search.ts` works over it):
+
+```json
+{ "version": 1, "generatedAt": "ISO",
+  "site": { "name": "...", "url": "...", "email": null, "phone": null, "address": null, "socials": {} },
+  "items": [ { "type": "...", "slug": "...", "title": "...", "excerpt": "≤300 chars", "url": "...",
+               "category": "...", "date": "YYYY-MM-DD or null", "tags": [], "body": "plain text" } ] }
+```
+
+- Search ignores Vietnamese diacritics (`kit/core/fold-text.ts`); list/search results are compact items (no `body`); full text comes only from a get-by-slug detail tool.
+
 ## Metrics row
 
 One `writeDataPoint` per `tools/call` (not per `tools/list`), written in `ctx.waitUntil`, never failing the request.

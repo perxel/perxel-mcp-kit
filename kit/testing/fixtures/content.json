@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "generatedAt": "2026-09-30T00:00:00.000Z",
+  "site": {
+    "name": "Example Site",
+    "url": "https://example.perxel.com",
+    "email": "hello@example.perxel.com",
+    "phone": null,
+    "address": null,
+    "socials": {}
+  },
+  "items": [
+    {
+      "type": "insight",
+      "slug": "thiet-ke-mcp-cho-doanh-nghiep-nho",
+      "title": "Thiết kế MCP cho doanh nghiệp nhỏ",
+      "excerpt": "Một máy chủ MCP gọn nhẹ giúp trợ lý AI trả lời từ dữ liệu của chính bạn, thay vì đoán mò từ trí nhớ chung.",
+      "url": "https://example.perxel.com/insights/thiet-ke-mcp-cho-doanh-nghiep-nho",
+      "category": "guides",
+      "date": "2026-09-10",
+      "tags": ["mcp", "ai"],
+      "body": "Bài viết đầy đủ về cách thiết kế một máy chủ MCP: công cụ gọn, phân trang, và giới hạn tần suất."
+    },
+    {
+      "type": "insight",
+      "slug": "o-dau-du-lieu-sach",
+      "title": "Dữ liệu sạch từ khâu nhập liệu",
+      "excerpt": "Chất lượng câu trả lời của AI bắt đầu từ bảng tính: tên cột rõ ràng, ngày tháng đúng định dạng.",
+      "url": "https://example.perxel.com/insights/o-dau-du-lieu-sach",
+      "category": "guides",
+      "date": "2026-08-22",
+      "tags": ["data"],
+      "body": "Toàn văn hướng dẫn làm sạch dữ liệu trước khi đưa lên website và MCP."
+    },
+    {
+      "type": "work",
+      "slug": "du-an-cua-hang-ca-phe-trung-nguyen",
+      "title": "Cửa hàng cà phê Trung Nguyên",
+      "excerpt": "Website giới thiệu và đặt bàn cho chuỗi cửa hàng cà phê tại Đà Nẵng.",
+      "url": "https://example.perxel.com/works/du-an-cua-hang-ca-phe-trung-nguyen",
+      "category": "hospitality",
+      "date": "2026-06-15",
+      "tags": ["website", "dat-ban"],
+      "body": "Mô tả chi tiết dự án: phạm vi, thời gian thực hiện và kết quả bàn giao."
+    },
+    {
+      "type": "work",
+      "slug": "bo-nhan-dien-thuong-hieu-sai-gon",
+      "title": "Bộ nhận diện thương hiệu Sài Gòn",
+      "excerpt": "Logo và hệ nhận diện cho một thương hiệu thủ công tại Thành phố Hồ Chí Minh.",
+      "url": "https://example.perxel.com/works/bo-nhan-dien-thuong-hieu-sai-gon",
+      "category": "branding",
+      "date": "2026-05-01",
+      "tags": ["logo"],
+      "body": "Toàn văn case study: ý tưởng logo, bảng màu và ứng dụng thực tế."
+    },
+    {
+      "type": "service",
+      "slug": "dich-vu-thiet-ke-website",
+      "title": "Dịch vụ thiết kế website",
+      "excerpt": "Thiết kế và lập trình website giới thiệu, tối ưu tốc độ và chuẩn SEO cơ bản.",
+      "url": "https://example.perxel.com/services/dich-vu-thiet-ke-website",
+      "category": "web",
+      "date": null,
+      "tags": ["website", "seo"],
+      "body": "Mô tả đầy đủ gói dịch vụ: các hạng mục, thời gian và điều khoản bảo hành."
+    },
+    {
+      "type": "service",
+      "slug": "dich-vu-tu-van-ai",
+      "title": "Dịch vụ tư vấn AI",
+      "excerpt": "Rà soát quy trình và đề xuất điểm ứng dụng AI tạo giá trị thật, không phô trương.",
+      "url": "https://example.perxel.com/services/dich-vu-tu-van-ai",
+      "category": "consulting",
+      "date": null,
+      "tags": ["ai", "tu-van"],
+      "body": "Toàn văn gói tư vấn: khảo sát, báo cáo và lộ trình triển khai theo quý."
+    },
+    {
+      "type": "product",
+      "slug": "goi-bao-tri-hang-nam",
+      "title": "Gói bảo trì hằng năm",
+      "excerpt": "Theo dõi, cập nhật và sao lưu website mỗi tháng, hỗ trợ qua email trong giờ hành chính.",
+      "url": "https://example.perxel.com/products/goi-bao-tri-hang-nam",
+      "category": "care",
+      "date": null,
+      "tags": ["bao-tri"],
+      "body": "Chi tiết gói bảo trì: phạm vi công việc hằng tháng và cam kết thời gian phản hồi."
+    },
+    {
+      "type": "product",
+      "slug": "khoa-hoc-viet-noi-dung",
+      "title": "Khóa học viết nội dung",
+      "excerpt": "Bốn buổi thực hành viết bài giới thiệu sản phẩm rõ ràng, dễ đọc trên điện thoại.",
+      "url": "https://example.perxel.com/products/khoa-hoc-viet-noi-dung",
+      "category": "training",
+      "date": "2026-09-01",
+      "tags": ["dao-tao", "content"],
+      "body": "Giáo trình đầy đủ: đề cương bốn buổi, bài tập và tiêu chí đánh giá đầu ra."
+    }
+  ]
+}

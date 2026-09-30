@@ -3,7 +3,8 @@ import { vietnamDate } from "./date.js";
 
 const encoder = new TextEncoder();
 
-async function sha256Hex(input: string): Promise<string> {
+/** SHA-256 hex of a string (also used by static-source to detect content changes). */
+export async function sha256Hex(input: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(input));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
