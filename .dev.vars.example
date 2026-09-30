@@ -7,3 +7,8 @@ ACCESS_CLIENT_SECRET=""
 ACCESS_TOKEN_URL=""
 ACCESS_AUTHORIZATION_URL=""
 ACCESS_JWKS_URL=""
+# Dashboard (http://localhost:8788/dash/): localhost skips the Access check.
+# Leave empty to see the empty dashboard; to see real data locally, run the
+# proxy too (`wrangler dev -c wrangler.mcp.jsonc -c wrangler.proxy.jsonc`)
+# with a key that's in its PROXY_KEYS.
+DASH_PROXY_KEY=""

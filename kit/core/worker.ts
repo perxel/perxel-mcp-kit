@@ -12,6 +12,7 @@ import {
 import { callerKeyFor, clientFamily } from "./caller.js";
 import { handleAuthorizeGet, handleAuthorizePost, handleCallback } from "./access.js";
 import type { McpConfig } from "./config.js";
+import { dashPathFor, handleDash, isDashPath } from "./dash.js";
 import { renderDocsPage } from "./docs-page.js";
 import type { Env } from "./env.js";
 import {
@@ -110,8 +111,36 @@ export interface SourceStatus {
   items: number;
 }
 
+/** A live source for /health: loaded (from memory, fetch or KV) on each check, then reported. */
+export interface HealthSource {
+  get(env: Env, ctx?: ExecutionContext): Promise<unknown>;
+  status(): SourceStatus;
+}
+
 export interface WorkerOptions {
-  sources?: Record<string, SourceStatus>;
+  /** Sources reported by /health: a `createStaticSource` result (live) or a fixed status. */
+  sources?: Record<string, SourceStatus | HealthSource>;
+}
+
+async function sourceStatuses(
+  sources: Record<string, SourceStatus | HealthSource>,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Record<string, SourceStatus>> {
+  const out: Record<string, SourceStatus> = {};
+  await Promise.all(
+    Object.entries(sources).map(async ([name, src]) => {
+      if ("status" in src && typeof src.status === "function") {
+        // Load first so a fresh isolate reports what a tool call would get,
+        // not "empty"; a failed load shows up as the status it leaves behind.
+        await src.get(env, ctx).catch(() => undefined);
+        out[name] = src.status();
+      } else {
+        out[name] = src as SourceStatus;
+      }
+    }),
+  );
+  return out;
 }
 
 type Era = "legacy" | "modern";
@@ -470,7 +499,7 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
     }
 
     if (path === "/health" && request.method === "GET") {
-      const sources = opts?.sources ?? {};
+      const sources = await sourceStatuses(opts?.sources ?? {}, env, ctx);
       const empty = Object.values(sources).some((s) => s.from === "empty");
       return json(empty ? 503 : 200, {
         ok: !empty,
@@ -495,6 +524,13 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
       return Response.json(resourceMetadataDoc(publicUrl), {
         headers: { "Cache-Control": "no-store", Pragma: "no-cache" },
       });
+    }
+
+    const dashPath = dashPathFor(env);
+    if (dashPath && isDashPath(path, dashPath)) {
+      const res = await handleDash(request, env, config, dashPath, log);
+      log("request", { route: "dash", method: request.method, status: res.status });
+      return res;
     }
 
     // OAuth discovery, registration, token and sign-in routes are the

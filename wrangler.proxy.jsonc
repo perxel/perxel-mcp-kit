@@ -1,17 +1,25 @@
 {
   "$schema": "https://developers.cloudflare.com/workers/wrangler/configuration-schema.json",
-  "name": "example-metrics-proxy",
+  // The metrics proxy: ONE per Cloudflare account, shared by every MCP in it.
+  // Deploy it once (from whichever clone comes first); later MCPs only add a
+  // key to PROXY_KEYS. See README "Infrastructure".
+  "name": "mcp-metrics-proxy",
   "main": "kit/metrics-proxy/worker.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // No public URL at all: MCP Workers reach it through their METRICS_PROXY
+  // service binding. Turn workers_dev on only to curl it while debugging.
+  "workers_dev": false,
+  "preview_urls": false,
   "vars": {
     // Paste the 32-char account id from the Cloudflare dashboard.
     "CF_ACCOUNT_ID": "<paste: Cloudflare account ID>"
   }
   // Secrets (never commit values; set with `wrangler secret put -c wrangler.proxy.jsonc <name>`):
   //   CF_API_TOKEN: token with Account | Account Analytics | Read (account-wide:
-  //     this Worker holds the only copy; dashboards only ever see proxy keys).
-  //   PROXY_KEYS: JSON mapping dashboard keys to datasets, e.g.
-  //     {"<sha256 hex of khatra dashboard key>": "mcp_khatra"}
-  //     (hash a key with `echo -n '<key>' | sha256sum`). One entry per client.
+  //     this Worker holds the only copy; MCP Workers only ever see proxy keys).
+  //   PROXY_KEYS: JSON mapping each MCP's DASH_PROXY_KEY to its dataset, e.g.
+  //     {"<sha256 hex of perxel key>": "mcp_perxel", "<sha256 hex of khatra key>": "mcp_khatra"}
+  //     (hash a key with `printf %s '<key>' | shasum -a 256`). One entry per MCP;
+  //     `secret put` replaces the whole value, so always paste the full map.
 }

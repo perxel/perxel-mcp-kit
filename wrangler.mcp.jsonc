@@ -1,19 +1,54 @@
 {
   "$schema": "https://developers.cloudflare.com/workers/wrangler/configuration-schema.json",
+  // The MCP Worker: serves /mcp, /, /health, OAuth, and the dashboard at /dash.
+  // One per MCP. See README "Infrastructure" for the whole picture.
   "name": "example-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // The only public entry point is the custom domain below: no workers.dev or
+  // preview URLs (they would bypass the Access app in front of /dash; the
+  // Worker also re-checks the Access token, so they'd fail closed anyway).
+  "workers_dev": false,
+  "preview_urls": false,
+  // Custom domain: DNS record + certificate are created on `wrangler deploy`.
+  // Must match MCP_PUBLIC_URL below. Change per MCP.
+  "routes": [{ "pattern": "example-mcp.perxel.com", "custom_domain": true }],
+
   "vars": {
-    "MCP_PUBLIC_URL": "http://localhost:8788"
+    // Exactly https://<custom domain>. OAuth `resource` must equal the URL users
+    // paste (plus /mcp). `.dev.vars` overrides this with http://localhost:8788.
+    "MCP_PUBLIC_URL": "https://example-mcp.perxel.com",
+    // Static JSON source, only when a tool uses kit/core/static-source.ts:
+    // a public URL the site publishes at build time (README "Content source").
+    // "CONTENT_URL": "https://example.com/content.json",
+    // Dashboard mount path on this Worker ("off" disables it).
+    "DASH_PATH": "/dash",
+    // Access team domain (Zero Trust → Settings → Custom Pages / team name),
+    // e.g. "perxel.cloudflareaccess.com". Shared by every MCP in the account.
+    "DASH_ACCESS_TEAM": "<paste: <team>.cloudflareaccess.com>",
+    // Application Audience (AUD) tag of the Access app protecting
+    // <host>/dash (Access → Applications → the app → Overview). Per MCP.
+    "DASH_ACCESS_AUD": "<paste: AUD tag of the /dash Access app>"
   },
+  // Secrets (never commit values; `wrangler secret put -c wrangler.mcp.jsonc <NAME>`):
+  //   IP_HASH_SALT, COOKIE_ENCRYPTION_KEY: random strings (`openssl rand -hex 32`)
+  //   ACCESS_CLIENT_ID, ACCESS_CLIENT_SECRET, ACCESS_TOKEN_URL,
+  //     ACCESS_AUTHORIZATION_URL, ACCESS_JWKS_URL: from the Access for SaaS (OIDC) app
+  //   DASH_PROXY_KEY: this MCP's metrics-proxy key (its SHA-256 goes in the proxy's PROXY_KEYS)
+
   // KV ids are placeholders: run `wrangler kv namespace create OAUTH_KV`
   // (and `CONTENT_KV`) and paste the ids here.
   "kv_namespaces": [
     { "binding": "OAUTH_KV", "id": "<run: wrangler kv namespace create OAUTH_KV>" },
     { "binding": "CONTENT_KV", "id": "<run: wrangler kv namespace create CONTENT_KV>" }
   ],
+  // mcp_<slug>, with - turned into _. The dashboard reads the same name.
   "analytics_engine_datasets": [{ "binding": "METRICS", "dataset": "mcp_example" }],
+  // The account's shared metrics proxy (wrangler.proxy.jsonc), reached
+  // Worker-to-Worker: the proxy itself has no public URL.
+  "services": [{ "binding": "METRICS_PROXY", "service": "mcp-metrics-proxy" }],
   // namespace_ids must be unique per Cloudflare account — change per MCP.
   "ratelimits": [
     {

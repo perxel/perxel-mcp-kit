@@ -1,16 +1,14 @@
 /**
- * Metrics proxy Worker (section 3.11 of the task list): holds the only real
- * Analytics Engine token (`CF_API_TOKEN`, Account Analytics Read) and gives
- * each Grafana dashboard its own key (`PROXY_KEYS`: JSON mapping the SHA-256
- * hex of a key to its dataset, e.g. `{ "<hex>": "mcp_example" }`).
+ * Metrics proxy Worker: one per Cloudflare account, shared by every MCP in
+ * it. Holds the only real Analytics Engine token (`CF_API_TOKEN`, Account
+ * Analytics Read) and gives each MCP its own key (`PROXY_KEYS`: JSON mapping
+ * the SHA-256 hex of a key to its dataset, e.g. `{ "<hex>": "mcp_example" }`).
  *
- * The Altinity ClickHouse plugin speaks the ClickHouse HTTP interface, so the
- * proxy accepts a query the same ways ClickHouse would: `GET ?query=` or a
- * POST body (raw SQL, or JSON with a `query` field). Auth is the dashboard
- * key, sent either as `Authorization: Bearer <key>` (preferred: configure it
- * as a custom header in the Grafana data source) or as HTTP basic auth with
- * the key in the password field (both are supported; document the Bearer
- * header in the dashboard provisioning).
+ * Callers are the MCP Workers' dashboards (`kit/core/dash.ts`), over a
+ * service binding; the proxy has no public URL (`workers_dev: false`). A
+ * query arrives as `GET ?query=` or a POST body (raw SQL, or JSON with a
+ * `query` field), with the key as `Authorization: Bearer <key>` (basic auth
+ * with the key as the password also works, for curl while debugging).
  *
  * Every query is checked by `validateQuery` before forwarding; anything that
  * reads outside the key's dataset is rejected with 403 and never reaches

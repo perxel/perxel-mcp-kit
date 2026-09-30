@@ -4,6 +4,7 @@ import { consentSecurityHeaders, renderConsentPage, renderOAuthErrorPage } from 
 import { isAllowedRedirectUri } from "./oauth.js";
 import type { McpConfig } from "./config.js";
 import type { Env } from "./env.js";
+import { verifyRs256Jwt } from "./jwt.js";
 
 /**
  * Cloudflare Access (OIDC) sign-in, adapted from Cloudflare's
@@ -58,12 +59,6 @@ function b64urlEncode(bytes: Uint8Array): string {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-function b64urlDecode(s: string): Uint8Array {
-  const padded = s.replace(/-/g, "+").replace(/_/g, "/");
-  const bin = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
-  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
 }
 
 function callbackUrl(request: Request): string {
@@ -225,27 +220,7 @@ async function exchangeAccessCode(
 
 /** Verify the Access id_token signature (RS256) and lifetime against the Access JWKS. */
 async function verifyAccessIdToken(env: Env, idToken: string): Promise<AccessClaims> {
-  const parts = idToken.split(".");
-  if (parts.length !== 3) throw new Error("malformed id_token");
-  const header = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[0]))) as { alg?: string; kid?: string };
-  if (header.alg !== "RS256") throw new Error(`unexpected id_token alg ${header.alg}`);
-  const jwksRes = await fetch(env.ACCESS_JWKS_URL as string);
-  if (!jwksRes.ok) throw new Error("could not fetch Access JWKS");
-  const jwks = (await jwksRes.json()) as { keys?: (JsonWebKey & { kid?: string })[] };
-  const keys = jwks.keys ?? [];
-  const jwk = keys.find((k) => k.kid === header.kid) ?? (keys.length === 1 ? keys[0] : undefined);
-  if (!jwk) throw new Error("no matching Access key");
-  const key = await crypto.subtle.importKey(
-    "jwk",
-    jwk,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["verify"],
-  );
-  const signed = new TextEncoder().encode(`${parts[0]}.${parts[1]}`);
-  const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlDecode(parts[2]), signed);
-  if (!ok) throw new Error("bad id_token signature");
-  const claims = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[1]))) as AccessClaims;
+  const claims = await verifyRs256Jwt<AccessClaims>(idToken, env.ACCESS_JWKS_URL as string);
   if (typeof claims.exp === "number" && claims.exp < Math.floor(Date.now() / 1000) - 60) {
     throw new Error("expired id_token");
   }

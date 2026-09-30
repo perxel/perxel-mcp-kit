@@ -4,7 +4,7 @@ import { defineConfig } from "./config.js";
 import type { Env } from "./env.js";
 import { recordToolCall } from "./metrics.js";
 import { defineTool, ToolError } from "./tool.js";
-import { createWorker } from "./worker.js";
+import { createWorker, type SourceStatus } from "./worker.js";
 import exampleConfig from "../../mcp.config.js";
 
 const okTool = defineTool({
@@ -271,6 +271,40 @@ describe("/health", () => {
     const res = await worker.fetch(new Request("https://mcp.perxel.com/health"), env, ctx);
     expect(res.status).toBe(503);
     expect(((await res.json()) as Record<string, unknown>)["ok"]).toBe(false);
+  });
+
+  it("loads a live source before reporting it (a fresh isolate isn't 'empty')", async () => {
+    let loads = 0;
+    let status: SourceStatus = { from: "empty", fetchedAt: "", etag: "", items: 0 };
+    const live = {
+      get: async () => {
+        loads += 1;
+        status = { from: "kv-fallback", fetchedAt: "2026-09-30T00:00:00.000Z", etag: '"x"', items: 4 };
+        return {};
+      },
+      status: () => status,
+    };
+    const worker = createWorker(config, { sources: { content: live } });
+    const { env } = fakeEnv();
+    const { ctx } = fakeCtx();
+    const res = await worker.fetch(new Request("https://mcp.perxel.com/health"), env, ctx);
+    expect(loads).toBe(1);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { sources: Record<string, SourceStatus> }).sources.content.from).toBe("kv-fallback");
+  });
+
+  it("503s when a live source can't load at all", async () => {
+    const live = {
+      get: async () => {
+        throw new Error("down");
+      },
+      status: (): SourceStatus => ({ from: "empty", fetchedAt: "", etag: "", items: 0 }),
+    };
+    const worker = createWorker(config, { sources: { content: live } });
+    const { env } = fakeEnv();
+    const { ctx } = fakeCtx();
+    const res = await worker.fetch(new Request("https://mcp.perxel.com/health"), env, ctx);
+    expect(res.status).toBe(503);
   });
 });
 

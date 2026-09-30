@@ -8,6 +8,7 @@ Every Perxel-built MCP follows this checklist. The kit enforces it; clones inher
 - MCP endpoint is `POST /mcp` on the Worker's custom domain; `GET`/`DELETE /mcp` answer 405 (SDK default).
 - `GET /` is a docs page generated from the tool definitions; `GET /health` reports version and source status.
 - The MCP URL users paste is `https://<host>/mcp`; one-level subdomains on `perxel.com` (covered by the free `*.perxel.com` certificate).
+- Infrastructure per MCP: one Worker on one custom domain (`/mcp`, `/`, `/health`, OAuth, `/dash`); per account: one shared metrics-proxy Worker with no public URL. `workers_dev` and `preview_urls` stay off. No containers, no hosted Inspector (README → Infrastructure).
 
 ## Tools and token rules
 
@@ -84,27 +85,28 @@ Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `to
 ## Monitoring
 
 - Workers Logs: structured JSON lines (`console.log(JSON.stringify(...))`), no personal data, no tool arguments.
-- `/health` returns `{ok, name, slug, version, kit, sources}`; `ok` is false (HTTP 503) only when a required source is `empty`. Each source reports where its copy came from (`memory`, `fetch` or `kv-fallback`) so a stale fallback is visible.
-- Grafana dashboard per client at `dash.perxel.com/<slug>` (private, Access-protected), reading through the metrics proxy, which holds the only Analytics Engine token and scopes each key to one dataset.
-- Dashboard edits made in the Grafana UI are lost on container sleep: design in Grafana, export the JSON, commit, deploy.
+- `/health` returns `{ok, name, slug, version, kit, sources}`, loading each live source first; `ok` is false (HTTP 503) only when a required source is `empty`. Each source reports where its copy came from (`memory`, `fetch` or `kv-fallback`) so a stale fallback is visible.
+- Dashboard served by the MCP Worker at `DASH_PATH` (default `/dash`, `off` disables): fixed panels over the metrics row, server-rendered, no client JS. Its SQL is built in `kit/core/dash.ts`, never taken from the request.
+- The dashboard is private twice over: a Cloudflare Access self-hosted app on `<host>/dash`, and the Worker re-verifying the `Cf-Access-Jwt-Assertion` (signature, `DASH_ACCESS_AUD`, issuer, expiry). Missing config fails closed (503); only local dev (localhost `MCP_PUBLIC_URL`) skips it.
+- Data reaches the dashboard only through the account's metrics proxy (service binding `METRICS_PROXY`), which holds the only Analytics Engine token and scopes each MCP's `DASH_PROXY_KEY` to its own dataset.
 
 ## Tests
 
 - `pnpm typecheck && pnpm test` passes after every change; never delete or weaken a test to make it pass.
 - Unit tests per tool; protocol test (tool list, schemas, a call, a validation error, 2025-client compatibility) runs against the clone's own config; gate tests (200 / 401 / 403); eval questions in `evals/` run against `wrangler dev` or a deployed URL.
-- Eval and dev clients only ever point at `localhost`/`127.0.0.1` unless `--allow-remote` is passed.
+- Eval, inspect and dev clients only ever point at `localhost`/`127.0.0.1` unless `--allow-remote` is passed.
 
 ## Costs (checked 2026-09-30)
 
-- Workers Paid $5/month: 10M requests then $0.30/M, 30M CPU-ms then $0.02/M. Covers the MCPs, KV, the proxy and containers at small-client scale.
-- Containers: included in Workers Paid (375 vCPU-min, 25 GiB-h, 200 GB-h/month), billed only while running.
+- Workers Paid $5/month: 10M requests then $0.30/M, 30M CPU-ms then $0.02/M. Covers the MCPs, KV and the proxy at small-client scale. No containers.
 - Zero Trust: 50 free users shared across all clients (staff logins plus dashboard viewers), then ~$7/user/month. Keep a margin over $84/user/year past 50 total.
 - LLM tokens are paid by the user's AI subscription, not by the MCP. An on-site chatbot is a separate product with its own token cost.
 
 ## Dev rules
 
 - Never deploy, log in to, or change a Cloudflare account from a dev machine without asking (`wrangler deploy`, `secret put`, `kv namespace create`, DNS/dashboard changes).
-- Never point a local client at a production URL.
+- Never point a local client at a production URL by accident: `pnpm eval` and `pnpm inspect` refuse non-local URLs unless `--allow-remote` is passed.
+- The MCP Inspector is a local dev tool only (it's a Node app with an open fetch proxy); never deploy it.
 - Clones never edit `kit/`; kit changes land via `pnpm kit:update`.
 - Pinned versions only; the installed `.d.ts` types win over any doc when an API name differs.
 - Don't touch other repos (`perxel-web-2026`, `openrace-mcp`, `openwallet-mcp`) without asking.

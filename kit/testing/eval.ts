@@ -58,7 +58,7 @@ export function parseQuestions(markdown: string): EvalQuestion[] {
   return questions;
 }
 
-function isLocalhost(url: URL): boolean {
+export function isLocalhost(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1";
 }
 
