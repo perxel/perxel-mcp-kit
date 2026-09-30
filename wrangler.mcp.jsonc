@@ -25,6 +25,9 @@
     // "CONTENT_URL": "https://example.com/content.json",
     // Dashboard mount path on this Worker ("off" disables it).
     "DASH_PATH": "/dash",
+    // Optional public demo: "true" serves /dash with no sign-in (metrics become
+    // world-readable). Also delete the /dash Access app. README "Public dashboard demo".
+    // "DASH_PUBLIC": "true",
     // Access team domain (Zero Trust → Settings → Custom Pages / team name),
     // e.g. "your-team.cloudflareaccess.com". Shared by every MCP in the account.
     "DASH_ACCESS_TEAM": "<paste: <team>.cloudflareaccess.com>",
