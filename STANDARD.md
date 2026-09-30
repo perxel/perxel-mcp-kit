@@ -105,6 +105,7 @@ Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `to
 ## Dev rules
 
 - Never deploy, log in to, or change a Cloudflare account from a dev machine without asking (`wrangler deploy`, `secret put`, `kv namespace create`, DNS/dashboard changes).
+- `pnpm setup:cloudflare` (kit/setup) creates and deploys everything from one Global API Key in `.dev.vars`. Run `--dry-run` first; the key stays in `.dev.vars`, is never committed, and never reaches the Worker.
 - Never point a local client at a production URL by accident: `pnpm eval` and `pnpm inspect` refuse non-local URLs unless `--allow-remote` is passed.
 - The MCP Inspector is a local dev tool only (it's a Node app with an open fetch proxy); never deploy it.
 - Clones never edit `kit/`; kit changes land via `pnpm kit:update`.

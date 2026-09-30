@@ -11,6 +11,7 @@
     "eval": "tsx kit/testing/eval.ts",
     "inspect": "tsx kit/testing/inspect.ts",
     "kit:update": "tsx kit/update/update.ts",
+    "setup:cloudflare": "tsx kit/setup/setup.ts",
     "cf-typegen": "wrangler types"
   },
   "dependencies": {

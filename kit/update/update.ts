@@ -87,9 +87,10 @@ async function downloadKit(repo: string, ref: string, dest: string): Promise<str
   if (!res.ok || !res.body) throw new Error(`kit:update: download failed: ${url} -> HTTP ${res.status}`);
   const tgz = join(dest, "kit.tgz");
   await pipeline(res.body as unknown as NodeJS.ReadableStream, createWriteStream(tgz));
-  // The tarball holds a single top-level dir; extract only its kit/ subdir.
+  // The tarball holds a single top-level dir. Extract it whole (small repo): GNU-only
+  // flags such as --wildcards break on macOS bsdtar.
   try {
-    execFileSync("tar", ["-xzf", tgz, "-C", dest, "--wildcards", "*/kit"], { timeout: 60_000 });
+    execFileSync("tar", ["-xzf", tgz, "-C", dest], { timeout: 60_000 });
   } catch (err) {
     throw new Error(`kit:update: tar extract failed (is tar installed?): ${err instanceof Error ? err.message : err}`);
   }

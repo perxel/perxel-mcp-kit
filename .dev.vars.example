@@ -12,3 +12,9 @@ ACCESS_JWKS_URL=""
 # proxy too (`wrangler dev -c wrangler.mcp.jsonc -c wrangler.proxy.jsonc`)
 # with a key that's in its PROXY_KEYS.
 DASH_PROXY_KEY=""
+
+# Cloudflare account setup (`pnpm setup:cloudflare`), read by the setup script
+# only, never by the Worker. Use the account's Global API Key (My Profile ->
+# API Tokens -> Global API Key) and the login email.
+CF_EMAIL=""
+CF_GLOBAL_API_KEY=""
