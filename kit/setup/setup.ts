@@ -363,7 +363,7 @@ export async function runSetup(o: SetupOptions): Promise<void> {
   // 9. Dashboard proxy key + the shared key registry
   log("9. Dashboard proxy key");
   const registryId = await ensureRegistry(api, acc, kvList, o);
-  const raw = registryId ? await api.requestText("GET", `${acc}/storage/kv/namespaces/${registryId}/values/${REGISTRY_KEY}`) : null;
+  const raw = registryId !== "(new)" ? await api.requestText("GET", `${acc}/storage/kv/namespaces/${registryId}/values/${REGISTRY_KEY}`) : null;
   const registry = raw ? (JSON.parse(raw) as Record<string, string>) : {};
   const registered = Object.values(registry).includes(cfg.dataset);
   if (have.has("DASH_PROXY_KEY") && registered) log("  key set and registered");
