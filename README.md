@@ -105,7 +105,7 @@ across all MCPs in the account, then about $7/user/month.
 
 | Wrangler CLI | Cloudflare dashboard (or API with a token) |
 |---|---|
-| Create KV namespaces, set secrets, deploy both Workers, attach the custom domain (`routes` + `custom_domain`), service binding, Analytics Engine dataset (created on first write), rate limiters, `wrangler tail` | Workers Paid plan; both Access apps; the Analytics Engine read token (`CF_API_TOKEN`) |
+| Create KV namespaces, set secrets, deploy both Workers, attach the custom domain (`routes` + `custom_domain`), service binding, Analytics Engine dataset (created on first write), rate limiters, `wrangler tail` | Access apps and the Analytics Engine read token (both done by `pnpm setup:cloudflare` through the API); Workers Paid plan; enabling Zero Trust the first time |
 
 ### Costs (checked 2026-09-30)
 
@@ -124,6 +124,7 @@ kit/                 owned by the kit; clones never edit (updated via pnpm kit:u
   metrics-proxy/     shared Worker holding the only Analytics Engine token; scopes each key to one dataset
   testing/           protocol test, gate tests, eval runner, inspect launcher
   update/            the kit:update script
+  setup/             the setup:cloudflare script (Cloudflare account setup from one global API key)
 src/tools/           small generic example (one public, one private tool)
 mcp.config.ts        example config
 evals/               example questions
@@ -214,8 +215,60 @@ the real Analytics Engine, so use a real read token only when you need to).
 ## Deploy
 
 Never deploy, `secret put`, or create resources from a dev machine without
-the owner's approval (`STANDARD.md` → Dev rules). Run `pnpm exec wrangler login`
-yourself first (it opens a browser).
+the owner's approval (`STANDARD.md` → Dev rules).
+
+### One command: `pnpm setup:cloudflare`
+
+The only input is the account's **Global API Key** (Cloudflare → My Profile →
+API Tokens → Global API Key) and the login email, in `.dev.vars` (gitignored)
+or the environment:
+
+```
+CF_EMAIL="you@example.com"
+CF_GLOBAL_API_KEY="..."
+```
+
+Set `name`, `routes`, `MCP_PUBLIC_URL` and the `mcp_<slug>` dataset in
+`wrangler.mcp.jsonc`, then:
+
+```
+pnpm setup:cloudflare --dry-run     # reads only, prints what it would do
+pnpm setup:cloudflare               # does it, deploys, checks /health
+```
+
+Flags: `--emails a@x.com,b@x.com` (who may sign in and see the dashboard;
+default: the login email), `--policy "<name>"` (reuse an existing reusable Access
+policy by name; default `MCP access`), `--no-deploy`.
+
+It is idempotent (looks first, creates only what is missing, safe to re-run) and
+drives wrangler with the same key, so no `wrangler login` is needed. It does:
+
+| Step | What |
+|---|---|
+| Account | Finds the account; fills `CF_ACCOUNT_ID` in `wrangler.proxy.jsonc` |
+| Zero Trust | Reads the team domain into `DASH_ACCESS_TEAM` |
+| Access policy | Creates (or reuses) one reusable *allow* policy for the emails |
+| Access apps | Creates the SaaS OIDC sign-in app (`https://<host>/callback`) and the self-hosted dashboard app (`<host>/dash`), attaches the policy, fills `DASH_ACCESS_AUD` |
+| KV | Creates `<worker>-OAUTH_KV` and `<worker>-CONTENT_KV`, fills their ids |
+| Rate limits | Picks `namespace_id`s no other Worker in the account uses |
+| Metrics proxy | Deploys `mcp-metrics-proxy` if absent; creates the Analytics Read token and sets `CF_API_TOKEN` |
+| Secrets | `IP_HASH_SALT`, `COOKIE_ENCRYPTION_KEY`, the five `ACCESS_*`, `DASH_PROXY_KEY` |
+| Proxy keys | Keeps every MCP's key hash in a `mcp-kit-registry` KV namespace and rebuilds the full `PROXY_KEYS` map from it, so adding an MCP never drops another |
+| Deploy | `wrangler deploy`, then waits for `/health` |
+
+One thing it cannot do: **enable Zero Trust on an account for the first time**
+(one click, Zero Trust → Get started, free plan). It stops with that message
+if it is off. Also: Cloudflare shows a SaaS app's client secret only when the
+app is created, so if `ACCESS_CLIENT_SECRET` is ever lost, delete the sign-in
+Access app and re-run.
+
+The global key is all-powerful: keep it in `.dev.vars` only, never commit it,
+and rotate it if it leaks. The Worker never reads it.
+
+### Manual steps (what the script automates)
+
+Only needed to understand or repair a setup by hand. Run `pnpm exec wrangler
+login` first (it opens a browser).
 
 ### Once per Cloudflare account (the first MCP does this)
 
