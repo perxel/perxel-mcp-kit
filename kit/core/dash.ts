@@ -531,6 +531,7 @@ interface AccessJwtClaims {
  */
 export async function checkDashAccess(request: Request, env: Env, now: number): Promise<{ viewer: string } | Response> {
   if (isLocalDev(request, env)) return { viewer: "" };
+  if (env.DASH_PUBLIC === "true") return { viewer: "" };
   const team = typeof env.DASH_ACCESS_TEAM === "string" ? env.DASH_ACCESS_TEAM.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "") : "";
   const aud = typeof env.DASH_ACCESS_AUD === "string" ? env.DASH_ACCESS_AUD.trim() : "";
   if (!team || !aud) {

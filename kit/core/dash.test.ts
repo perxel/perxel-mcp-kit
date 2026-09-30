@@ -125,6 +125,14 @@ describe("checkDashAccess", () => {
     expect(((await checkDashAccess(req(), env, NOW)) as Response).status).toBe(403);
   });
 
+  it("serves without a sign-in only when DASH_PUBLIC is exactly \"true\"", async () => {
+    const base = { MCP_PUBLIC_URL: "https://mcp.example.com" };
+    expect(await checkDashAccess(req(), { ...base, DASH_PUBLIC: "true" } as unknown as Env, NOW)).toEqual({ viewer: "" });
+    for (const v of ["false", "", "1", "TRUE"]) {
+      expect(((await checkDashAccess(req(), { ...base, DASH_PUBLIC: v } as unknown as Env, NOW)) as Response).status).toBe(503);
+    }
+  });
+
   it("fails closed with 503 when Access isn't configured", async () => {
     const res = await checkDashAccess(req(), {} as Env, NOW);
     expect(res).toBeInstanceOf(Response);

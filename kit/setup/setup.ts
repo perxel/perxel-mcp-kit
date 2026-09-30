@@ -46,6 +46,7 @@ export interface McpConfig {
   contentKvId: string;
   team: string;
   aud: string;
+  dashPublic: boolean;
   namespaceIds: string[];
 }
 
@@ -73,6 +74,7 @@ export function readMcpConfig(text: string): McpConfig {
     contentKvId: kv("CONTENT_KV"),
     team: c.vars?.["DASH_ACCESS_TEAM"] ?? "",
     aud: c.vars?.["DASH_ACCESS_AUD"] ?? "",
+    dashPublic: c.vars?.["DASH_PUBLIC"] === "true",
     namespaceIds: (c.ratelimits ?? []).map((r) => r.namespace_id),
   };
 }
@@ -273,10 +275,13 @@ export async function runSetup(o: SetupOptions): Promise<void> {
   }
   const clientId = signIn.saas_app?.client_id ?? signIn.aud;
 
-  // 4b. Dashboard app
+  // 4b. Dashboard app (skipped when DASH_PUBLIC is "true": the dashboard is open)
   let dash = apps.find((a) => a.type === "self_hosted" && a.domain === dashDomain);
   const dashBody = (name: string) => ({ type: "self_hosted", name, domain: dashDomain, session_duration: "24h", app_launcher_visible: false });
-  if (dash) {
+  if (cfg.dashPublic) {
+    log("  DASH_PUBLIC is true: no Access app for the dashboard");
+    if (dash) log(`  WARNING: "${dash.name}" still protects ${dashDomain} and would block visitors: delete that Access app`);
+  } else if (dash) {
     log(`  dashboard app exists ("${dash.name}")`);
     await ensurePolicy(dash, dashBody(dash.name));
   } else {
@@ -286,7 +291,7 @@ export async function runSetup(o: SetupOptions): Promise<void> {
       { id: "", type: "self_hosted", name: "(new)", aud: "(new)" } as AccessApp,
     );
   }
-  if (dash.aud !== cfg.aud) mcpText = setJsonValue(mcpText, "DASH_ACCESS_AUD", dash.aud);
+  if (dash && dash.aud !== cfg.aud) mcpText = setJsonValue(mcpText, "DASH_ACCESS_AUD", dash.aud);
 
   // 5. KV namespaces
   log("5. KV namespaces");
