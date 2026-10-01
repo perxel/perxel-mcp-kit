@@ -5,6 +5,8 @@ export interface McpConfig {
   name: string;
   version: string;
   description: string;
+  /** Optional server instructions sent to the model on initialize: tool order, units, caveats. Keep short. */
+  instructions?: string;
   scopes: Record<string, string>; // every private tool's scope must be listed
   tools: ToolDef[];
   docs: { contact: string };
