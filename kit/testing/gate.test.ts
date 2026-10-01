@@ -27,6 +27,8 @@ const worker = createWorker(config);
 // Any public tool that accepts no arguments stands in for "a public call", so
 // the gate tests run against whatever tools the clone defines.
 const publicTool = config.tools.find((t) => t.access === "public" && t.inputSchema.safeParse({}).success);
+// The private-tool gate paths need the example's private `whoami`; a clone with only public tools skips them.
+const hasPrivateTool = config.tools.some((t) => t.name === "whoami" && t.access === "private");
 let gateEnv: GateTestEnv;
 let restoreFetch: () => void;
 
@@ -96,7 +98,7 @@ describe("gate", () => {
     expect(msg.result).toBeDefined();
   });
 
-  it("private call without token → 401 with the exact challenge", async () => {
+  it.skipIf(!hasPrivateTool)("private call without token → 401 with the exact challenge", async () => {
     const before = gateEnv.points.length;
     const res = await postMcp(gateEnv.env, toolCallBody("whoami"));
     expect(res.status).toBe(401);
@@ -109,7 +111,7 @@ describe("gate", () => {
     expect(rows[0].blobs?.[6]).toBe("anon");
   });
 
-  it("Mcp-Name header path → 401 (body carries no tools/call)", async () => {
+  it.skipIf(!hasPrivateTool)("Mcp-Name header path → 401 (body carries no tools/call)", async () => {
     const res = await postMcp(gateEnv.env, { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }, {
       "Mcp-Method": "tools/call",
       "Mcp-Name": "whoami",
@@ -118,7 +120,7 @@ describe("gate", () => {
     expect(res.headers.get("WWW-Authenticate")).toContain('scope="private:read"');
   });
 
-  it("batch containing one private call → 401", async () => {
+  it.skipIf(!hasPrivateTool)("batch containing one private call → 401", async () => {
     const before = gateEnv.points.length;
     const res = await postMcp(gateEnv.env, [
       toolCallBody(publicTool!.name, {}, 1),
@@ -150,7 +152,7 @@ describe("authenticated calls", () => {
 
   const authHeaders = () => ({ Authorization: `Bearer ${accessToken}` });
 
-  it("valid token with the scope → 200 and whoami returns the user", async () => {
+  it.skipIf(!hasPrivateTool)("valid token with the scope → 200 and whoami returns the user", async () => {
     const before = gateEnv.points.length;
     const res = await postMcp(gateEnv.env, toolCallBody("whoami"), authHeaders());
     expect(res.status).toBe(200);
@@ -174,7 +176,7 @@ describe("authenticated calls", () => {
     expect(msg.result).toBeDefined();
   });
 
-  it("dead token → provider 401 and an unauthorized row", async () => {
+  it.skipIf(!hasPrivateTool)("dead token → provider 401 and an unauthorized row", async () => {
     const before = gateEnv.points.length;
     const res = await postMcp(gateEnv.env, toolCallBody("whoami"), { Authorization: "Bearer dead-token" });
     expect(res.status).toBe(401);
@@ -183,7 +185,7 @@ describe("authenticated calls", () => {
     expect(rows[0].blobs?.slice(1, 4)).toEqual(["whoami", "unauthorized", "invalid_token"]);
   });
 
-  it("valid token lacking the scope → 403 insufficient_scope", async () => {
+  it.skipIf(!hasPrivateTool)("valid token lacking the scope → 403 insufficient_scope", async () => {
     const scopedOut = await mintToken(worker, gateEnv.env, { scope: "" });
     const before = gateEnv.points.length;
     const res = await postMcp(gateEnv.env, toolCallBody("whoami"), {

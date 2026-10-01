@@ -4,6 +4,7 @@ import { defineConfig } from "./config.js";
 import type { Env } from "./env.js";
 import { recordToolCall } from "./metrics.js";
 import { defineTool, ToolError } from "./tool.js";
+import { KIT_VERSION } from "./version.js";
 import { createWorker, type SourceStatus } from "./worker.js";
 import exampleConfig from "../../mcp.config.js";
 
@@ -140,7 +141,7 @@ describe("metrics rows", () => {
       "anon",
       "",
       "legacy",
-      "dev",
+      KIT_VERSION,
     ]);
     expect(p.doubles?.[0]).toBeGreaterThanOrEqual(0);
     expect(p.doubles?.[1]).toBe(3);
@@ -257,7 +258,7 @@ describe("/health", () => {
       name: "Example MCP",
       slug: "example",
       version: "0.1.0",
-      kit: "dev",
+      kit: KIT_VERSION,
       sources: {},
     });
   });
