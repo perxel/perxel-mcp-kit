@@ -51,7 +51,10 @@ export function buildServer(
 ): McpServer {
   const server = new McpServer(
     { name: config.slug, version: config.version },
-    { cacheHints: { "tools/list": { ttlMs: 300_000, cacheScope: "public" } } },
+    {
+      ...(config.instructions ? { instructions: config.instructions } : {}),
+      cacheHints: { "tools/list": { ttlMs: 300_000, cacheScope: "public" } },
+    },
   );
   for (const def of config.tools) {
     server.registerTool(

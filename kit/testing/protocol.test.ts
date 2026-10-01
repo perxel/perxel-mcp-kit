@@ -102,6 +102,8 @@ describe("protocol", () => {
     });
     expect(init.result?.["protocolVersion"]).toBe("2025-06-18");
     expect((init.result?.["serverInfo"] as { name: string }).name).toBe(config.slug);
+    // Instructions are optional: sent when the config sets them, absent otherwise.
+    expect(init.result?.["instructions"]).toBe(config.instructions);
     const list = await rpc("tools/list", {});
     const tools = list.result?.["tools"] as { name: string }[];
     expect(tools.map((t) => t.name).sort()).toEqual(config.tools.map((t) => t.name).sort());
