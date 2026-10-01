@@ -1,9 +1,9 @@
 # Plan 001: Perxel MCP Kit v1
 
-Status: approved, not started
+Status: built (kit released as v0.0.1), not deployed
 Written: 2026-09-30
 Scope of v1: Claude only. ChatGPT and Gemini are roadmap items (see the end).
-Implementation: follow `001-mcp-kit-v1-tasks.md` (task order, fixed decisions, stop points). It wins where the two differ.
+History: the task list and build notes that used to sit in `001-mcp-kit-v1-tasks.md` and `001-notes.md` are folded into "Build result" below. The code, `README.md` and `STANDARD.md` are the source of truth for how things work now.
 
 ## Product summary
 
@@ -187,21 +187,51 @@ Watch: Containers and Workers overages once clients grow; the shared 50-seat Zer
 
 ## Build order
 
-1. Scaffold `perxel-mcp-kit`: `STANDARD.md`, `kit/core` (stateless handler, tool pattern, rate limit, metrics, logs, health, docs page), example tools, unit and protocol tests. Pinned versions, typecheck passing.
-2. `kit:update` (pull `kit/` from the remote kit repo) and the static JSON data source helper (see "Data sources"). Then add the `content.json` export to perxel-web-2026 (a change to that repo, deployed through its normal flow after approval), and create `perxel-mcp` from the template with Perxel's public tools over it: search_content, get_insight, get_work, get_service, list_products, contact_info.
-3. OAuth: gate, Allow/Deny page, Access OIDC sign-in, gate tests; proven in `perxel-mcp` with the private test tool.
-4. Metrics proxy, then `kit/dashboard` and the base dashboard.
-5. `TRANSFER.md`, README, LICENSE.
-6. Deploy `perxel-mcp` to `mcp.perxel.com` and `dash.perxel.com/perxel` **only after approval**. The user then tests the Claude Connect card and the Access login with the steps provided.
+1. [x] Scaffold `perxel-mcp-kit`: `STANDARD.md`, `kit/core`, example tools, unit and protocol tests, evals.
+2. [x] `kit:update` and the static JSON data source helper.
+3. [x] OAuth: gate, Allow/Deny page, Access OIDC sign-in, gate tests.
+4. [x] Metrics proxy, then `kit/dashboard` and the base dashboard.
+5. [x] `TRANSFER.md`, README, LICENSE.
+6. [ ] Not started, needs approval: the `content.json` export in perxel-web-2026, creating `perxel-mcp` from the template, and deploying `perxel-mcp` to `mcp.perxel.com` and `dash.perxel.com/perxel`. The user then tests the Claude Connect card and the Access login.
 
 No deploys, pushes, or changes to openrace or openwallet without asking.
 
-## To verify during the build
+## To verify before selling on it
 
-- Grafana's memory use and cold start in a Container (these decide the instance size).
-- The ClickHouse plugin working through the metrics proxy.
+- Build and run the Grafana container (Docker wasn't available during the build): memory use and cold start decide the instance size (now `basic`), and all nine base panels must render through the proxy key.
+- The ClickHouse plugin working through the metrics proxy, live.
+- A real deploy: KV, Analytics Engine, Access sign-in and the Claude Connect card were never run against Cloudflare.
+- The `kit:update` GitHub-download path (only the `--from` path is tested).
 - Which Cloudflare account openrace runs in (it matters for `dash.perxel.com/openrace`).
 - Whether openrace and openwallet need the standard metrics row before their dashboards work (they write different metrics shapes today).
+
+## Build result (2026-09-30)
+
+Built in `perxel/perxel-mcp-kit`, phases 1–5, no deploys, no other repo touched. `pnpm typecheck` clean, `pnpm test` 13 files / 115 tests passing, none deleted or weakened.
+
+**What exists:** `STANDARD.md`; `kit/core` (stateless SDK v2 handler, tool pattern, gate, OAuth + Access OIDC sign-in, consent page, rate limit, metrics row, logs, `/health`, docs page); example tools `get_time` (public) and `whoami` (private); `kit:update`; static JSON source with diacritic-insensitive search; metrics proxy with a per-dataset SQL validator; Grafana container dashboard (`base.json`, nine panels); `README.md`, `TRANSFER.md`, `LICENSE` (PolyForm Shield 1.0.0, official text, Required Notice Perxel).
+
+**Where the installed APIs differed from this plan:**
+- `@modelcontextprotocol/server@2.2.0` has no `Client` class, so `protocol.test.ts` speaks raw JSON-RPC over `worker.fetch` (a client package would break the pinned-deps rule).
+- `@cloudflare/workers-oauth-provider` imports `cloudflare:workers`, which plain-Node vitest can't load. `vitest.config.ts` aliases it to `kit/testing/cloudflare-workers-stub.ts` and sets the `global_fetch_strictly_public` flag in tests. Production is unaffected.
+- The rate-limit binding type is `RateLimit`, not `RateLimiter`.
+- Library behaviors found in `dist`, not in the types: PKCE S256-only and refresh rotation are defaults; `token_endpoint_auth_methods_supported` is always `[client_secret_basic, client_secret_post, none]`; the provider 404s the bare `/.well-known/oauth-protected-resource`, so the kit serves both metadata paths from one `resourceMetadataDoc`.
+- Metrics doubles are `[latency, count, bytes]`.
+- Grafana froze the `grafana-oss` repo after 12.4.0; 13.0.2 is its newest tag (switch image repos if it goes stale).
+
+**Decisions made while building:**
+- *Toolchain pins:* vitest 4.1.11 (latest 4.x, not 5.x); `@types/node` added (implied by `types: ["node"]`); `yaml@2.9.1` is the one allowed extra dependency (dashboard tests); `@cloudflare/containers@0.3.7`; `grafana/grafana-oss:13.0.2`; `vertamedia-clickhouse-datasource@3.4.11`.
+- *Version and caller keys:* `kit/VERSION` is the SSOT, and `kit/core/version.ts` is generated from it by `kit:update` (esbuild can't bundle `?raw`). Caller keys are a single SHA-256 of `salt:userId` or `salt:ip:date`.
+- *Tools and search:* `structuredContent` only for plain-object tool data. Search scores title 10 > excerpt/category/tags 4/3/3 > body 1; a blank query lists the first N. Unknown tool names never require auth.
+- *Gate:* body parse wins over `Mcp-Name`/`Mcp-Method` headers. Gate 401 rows use code `""`, bad-token 401s use `invalid_token`, 403s use `insufficient_scope`, and 429 rows stay `anon`.
+- *Static source:* `get()` awaits the KV backup write (no `waitUntil`). `/health` `from` is the last load path used (`fetch`, `memory`, `kv-fallback`, `empty`).
+- *Evals:* prose between questions is ignored; prose inside a question is a parse error. Remote URLs need `--allow-remote`.
+- *kit:update:* uses system `tar` and `git ls-remote`; a dirty `kit/` is refused.
+- *Metrics proxy:* serves GET `?query=` and POST (raw or JSON `query`); Bearer preferred, basic-auth password as fallback; a missing or wrong key gets the same 401. The validator strips comments and strings, and rejects `;`+more, `INTO`/`ATTACH`, `system.`, dotted or mismatched datasets, and queries with no FROM. A comma-join bypass (`FROM mcp_a, mcp_b`) was found and fixed.
+- *Dashboard:* the dataset is stamped at build time (`ARG DATASET` + `image_vars`) so clones never edit `kit/`; runtime config flows worker vars/secrets → container `envVars` → Grafana `$__env{...}`. The dashboard test derives its expected dataset from `wrangler.dash.jsonc`.
+- *OAuth:* the approved consent subset is carried across the Access round-trip in `beginUpstream` data. The kit adapts Cloudflare's `remote-mcp-cf-access` template (no `McpAgent`/DO state; the library's handle-and-cookie replaces the hand-written CSRF).
+
+**Human setup before first deploy** (full steps in `README.md`): Workers Paid plan; create `OAUTH_KV` and `CONTENT_KV`; Access for SaaS OIDC app with redirect `https://<host>/callback` and one-time PIN; secrets (`IP_HASH_SALT`, `COOKIE_ENCRYPTION_KEY`, `ACCESS_*`); unique rate-limit `namespace_id`s; custom domain and exact `MCP_PUBLIC_URL`; deploy the MCP Worker; proxy (`CF_ACCOUNT_ID`, `CF_API_TOKEN`, `PROXY_KEYS`); dashboard (`SLUG`, `PROXY_URL`, `DATASET`, `PROXY_KEY`, Worker route, Access rule); then test the Claude Connect card, the Access login and the dashboard panels.
 
 ## Roadmap (not in v1)
 
