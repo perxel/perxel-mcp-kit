@@ -229,3 +229,8 @@ export async function deleteConversation(db: D1Database, id: string): Promise<vo
     db.prepare("DELETE FROM conversations WHERE id = ?").bind(id),
   ]);
 }
+
+/** Adds spend outside a turn (summary, topic label) to a conversation. */
+export async function addCost(db: D1Database, id: string, costUsd: number): Promise<void> {
+  await db.prepare("UPDATE conversations SET cost_usd = cost_usd + ? WHERE id = ?").bind(costUsd, id).run();
+}

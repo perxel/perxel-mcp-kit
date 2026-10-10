@@ -9,6 +9,8 @@ import {
   insufficientScope,
   type OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
+import { runAskCron } from "../ask/cron.js";
+import { ASK_PATHS, handleAsk } from "../ask/handler.js";
 import { callerKeyFor, clientFamily } from "./caller.js";
 import { handleAuthorizeGet, handleAuthorizePost, handleCallback } from "./access.js";
 import type { McpConfig } from "./config.js";
@@ -529,6 +531,13 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
       });
     }
 
+    // Ask routes exist only when the config has an `ask` block; otherwise they 404 below.
+    if (config.ask && (ASK_PATHS as readonly string[]).includes(path)) {
+      const res = await handleAsk(request, env, ctx, config, log);
+      log("request", { route: "ask", path, method: request.method, status: res.status });
+      return res;
+    }
+
     const dashPath = dashPathFor(env);
     if (dashPath && isDashPath(path, dashPath)) {
       const res = await handleDash(request, env, config, dashPath, log);
@@ -542,5 +551,11 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
     return buildProvider(providerOpts).fetch(request, env, ctx);
   }
 
-  return { fetch };
+  /** Cron trigger: the Ask daily job (topic labels, retention). A no-op without `config.ask`. */
+  async function scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    const log = (event: string, fields?: Record<string, unknown>) => console.log(JSON.stringify({ event, ...fields }));
+    ctx.waitUntil(runAskCron(config, env, {}, log).then(() => undefined));
+  }
+
+  return { fetch, scheduled };
 }
