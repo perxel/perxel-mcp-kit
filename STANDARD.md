@@ -67,7 +67,7 @@ One `writeDataPoint` per `tools/call` (not per `tools/list`), written in `ctx.wa
 | `blobs[1]` | tool name (`unknown` if not found) |
 | `blobs[2]` | status: `ok`, `error`, `invalid_input`, `unauthorized`, `forbidden`, `rate_limited` |
 | `blobs[3]` | error code or `""` |
-| `blobs[4]` | client family: `claude-ai` (IP in Anthropic range), `claude-code`, `inspector`, `other` (from 2026 client identity `clientInfo.name`, else User-Agent) |
+| `blobs[4]` | client family: `claude-ai` (IP in Anthropic range), `claude-code`, `inspector`, `other` (from 2026 client identity `clientInfo.name`, else User-Agent), `ask` (called by the Ask chat) |
 | `blobs[5]` | access: `public` or `private` |
 | `blobs[6]` | auth: `anon` or `user` |
 | `blobs[7]` | country (`request.cf.country` or `""`) |
@@ -78,6 +78,8 @@ One `writeDataPoint` per `tools/call` (not per `tools/list`), written in `ctx.wa
 | `doubles[2]` | response bytes |
 
 Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `tools/call` also produce a row.
+
+Ask adds one row per turn with `blobs[1]` = `ask.turn`, `blobs[4]` = `ask`, status `ok` / `error` / `rate_limited` and the Ask error code in `blobs[3]`; `doubles[1]` = tool calls in the turn, `doubles[2]` = cost in micro-USD (this slot is bytes on tool rows), `doubles[3]` = output tokens. Dashboard tool-call panels exclude `ask.turn` rows.
 
 - Analytics Engine: one dataset per MCP (`mcp_<slug>`, `-` → `_`), 3-month retention.
 - Static JSON sources additionally keep a last-good copy in KV, written only when content changes.
@@ -90,6 +92,17 @@ Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `to
 - The dashboard is private twice over: a Cloudflare Access self-hosted app on `<host>/dash`, and the Worker re-verifying the `Cf-Access-Jwt-Assertion` (signature, `DASH_ACCESS_AUD`, issuer, expiry). Missing config fails closed (503); only local dev (localhost `MCP_PUBLIC_URL`) skips it. Opt-out for a public demo: `DASH_PUBLIC="true"` serves `/dash` with no sign-in (delete the Access app too; setup skips it). Anything else keeps it private.
 - Data reaches the dashboard only through the account's metrics proxy (service binding `METRICS_PROXY`), which holds the only Analytics Engine token and scopes each MCP's `DASH_PROXY_KEY` to its own dataset.
 
+## Ask (when `config.ask` is set)
+
+- Public tools only; the anonymous `ToolContext` (`auth: null`).
+- Every visitor message redacted before D1 and before `/ask/summary`; raw text goes to the model only.
+- Message text deleted after `retentionDays` (default 90) by the daily cron; `caller_key` nulled with it.
+- Turnstile on a conversation's first turn, an HMAC session after it; exact-origin CORS (`allowedOrigins`), localhost only when the Worker itself is local.
+- Caps: user messages per conversation, input length, output tokens, tool steps, per-IP per minute, a daily USD budget (soft); a credit limit on the OpenRouter key (hard).
+- OpenRouter with `provider.data_collection: "deny"`; cost summed over steps.
+- `/dash/conversations` behind its own Access app plus the JWT re-check, regardless of `DASH_PUBLIC`; actions are same-origin POSTs. The public dashboard shows counts and topics, never text.
+- No production Langfuse or other third-party logging by default; another sink goes through `AskLogger` (`kit/ask/logger.ts`).
+
 ## Tests
 
 - `pnpm typecheck && pnpm test` passes after every change; never delete or weaken a test to make it pass.
@@ -100,7 +113,7 @@ Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `to
 
 - Workers Paid $5/month: 10M requests then $0.30/M, 30M CPU-ms then $0.02/M. Covers the MCPs, KV and the proxy at small scale. No containers.
 - Zero Trust: 50 free users shared across all MCPs in the account (sign-in users plus dashboard viewers), then ~$7/user/month.
-- LLM tokens are paid by the user's AI subscription, not by the MCP. An on-site chatbot is a separate product with its own token cost.
+- LLM tokens are paid by the user's AI subscription, not by the MCP. Ask is the exception: its model calls are paid through the OpenRouter key on the Worker (per-answer cost in `/dash`, exact billing in OpenRouter's per-key usage). D1, Turnstile and the cron fit the free tiers at small traffic.
 
 ## Dev rules
 

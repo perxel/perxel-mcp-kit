@@ -27,7 +27,15 @@ a redeploy plus secrets into the new account, then a DNS cutover.
 6. Have every user remove the old connector in Claude and add the URL again:
    OAuth tokens are tied to the old account's KV, so one sign-in is required
    (on Team/Enterprise an org Owner re-adds once for everyone).
-7. Verify: `/health`, a public tool call, a private tool's Connect card,
+7. Ask (only when `mcp.config.ts` has `ask`): the OpenRouter key and the
+   Turnstile widget move with the Worker. Put the same `OPENROUTER_API_KEY`
+   (or a new key, if the new owner pays for AI) on the new Worker; create a
+   new Turnstile widget in the new account (`pnpm setup:cloudflare` does it)
+   and give its site key to the website; generate a new `ASK_SESSION_SECRET`
+   (open chats start over). Export the D1 `ASK_DB` (`wrangler d1 export`)
+   and import it in the new account if conversation history should move;
+   the Access app on `<host>/dash/conversations` is recreated by setup.
+8. Verify: `/health`, a public tool call, a private tool's Connect card,
    and `/dash` behind Access, then delete the old Worker and remove its key
    from the old proxy's `PROXY_KEYS`.
 
