@@ -30,5 +30,17 @@ export interface Env {
   DASH_ACCESS_AUD?: string;
   /** "true" serves the dashboard without an Access sign-in (public demo). Anything else keeps it behind Access. */
   DASH_PUBLIC?: string;
+  /** Ask (only when `config.ask` is set): conversation store. */
+  ASK_DB?: D1Database;
+  /** Ask: per-IP limit, its own namespace (limit = ask.limits.perIpPerMinute). */
+  ASK_RATE_LIMITER?: RateLimit;
+  /** Ask: OpenRouter key (secret). */
+  OPENROUTER_API_KEY?: string;
+  /** Ask: Turnstile widget secret. */
+  TURNSTILE_SECRET?: string;
+  /** Ask: HMAC key for session tokens (secret, random). */
+  ASK_SESSION_SECRET?: string;
+  /** Ask, local dev only: Langfuse keys "publicKey:secretKey" for evals. Never set in production. */
+  ASK_DEV_LANGFUSE?: string;
   [key: string]: unknown;
 }

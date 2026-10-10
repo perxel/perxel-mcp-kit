@@ -1,3 +1,4 @@
+import { validateAskConfig, type AskConfig } from "../ask/config.js";
 import type { ToolDef } from "./tool.js";
 
 export interface McpConfig {
@@ -10,6 +11,8 @@ export interface McpConfig {
   scopes: Record<string, string>; // every private tool's scope must be listed
   tools: ToolDef[];
   docs: { contact: string };
+  /** Optional Ask chat endpoint (/ask) over the public tools. Omit to serve no Ask routes. */
+  ask?: AskConfig;
 }
 
 const SLUG_RE = /^[a-z0-9-]+$/;
@@ -38,5 +41,6 @@ export function defineConfig(config: McpConfig): McpConfig {
       }
     }
   }
+  if (config.ask) validateAskConfig(config.ask);
   return config;
 }
