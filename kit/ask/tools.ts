@@ -9,6 +9,8 @@ import type { AskLocale } from "./config.js";
 export const HANDOFF_TOOL = "suggest_handoff";
 
 export const MAX_SOURCES = 4;
+/** Sources taken from one tool result: the top hits, not a whole search list. */
+export const SOURCES_PER_RESULT = 2;
 
 export interface AskSource {
   url: string;
@@ -51,7 +53,7 @@ export function sourcesIn(data: unknown, limit = 50): AskSource[] {
       stack.push(...node);
     } else if (isRecord(node)) {
       const { url, title } = node;
-      if (typeof url === "string" && /^https?:\/\//.test(url) && typeof title === "string" && title.trim()) {
+      if (typeof url === "string" && /^https?:\/\//.test(url) && typeof title === "string" && title.trim() && !out.some((o) => o.url === url)) {
         out.push({ url, title: title.trim() });
       }
       for (const v of Object.values(node)) if (typeof v === "object" && v !== null) stack.push(v);
@@ -99,7 +101,7 @@ export function buildAskTools(opts: AskToolsOptions): ToolSet {
         try {
           const result = await def.execute(args, anonCtx);
           count = result.count ?? -1;
-          for (const s of sourcesIn(result.data)) {
+          for (const s of sourcesIn(result.data, SOURCES_PER_RESULT)) {
             if (sourceUrls.has(s.url) || sourceUrls.size >= MAX_SOURCES) continue;
             sourceUrls.add(s.url);
             onSource?.(s);

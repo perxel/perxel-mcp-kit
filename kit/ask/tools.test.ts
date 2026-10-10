@@ -91,6 +91,29 @@ describe("ask tools", () => {
     expect(await tools["search_content"].execute!({ query: "boom" }, opts)).toEqual({ error: "nothing" });
   });
 
+  it("takes at most two sources from one result", async () => {
+    const many = defineTool({
+      name: "many",
+      title: "Many",
+      description: "Many.",
+      access: "public",
+      inputSchema: z.object({}),
+      async execute() {
+        return { data: { results: [1, 2, 3, 4].map((n) => ({ title: `T${n}`, url: `https://x.test/${n}` })) } };
+      },
+    });
+    const sources: string[] = [];
+    const tools = buildAskTools({
+      config: { ...config, tools: [many] },
+      ctx: { env: {} as Env, auth: null, requestId: "r", log: () => {} },
+      locale: "vi",
+      metrics: { callerKey: "", country: "" },
+      onSource: (s) => sources.push(s.url),
+    });
+    await tools["many"].execute!({}, opts);
+    expect(sources).toEqual(["https://x.test/1", "https://x.test/2"]);
+  });
+
   it("caps sources at 4 across calls", () => {
     expect(sourcesIn({ a: [{ title: "t", url: "https://1" }, { b: { title: "u", url: "http://2" } }] }).map((s) => s.url)).toEqual([
       "https://1",
