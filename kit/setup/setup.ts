@@ -94,7 +94,7 @@ export function setKvId(text: string, binding: string, id: string): string {
 
 /** Rate-limit namespace ids must be unique per account: pick `count` free ones at or above `start`. */
 export function pickNamespaceIds(mine: string[], used: Set<string>, count = 2, start = 3001): string[] {
-  if (mine.length === count && mine.every((id) => !used.has(id)) && new Set(mine).size === count) return mine;
+  if (mine.length === count && mine.every((id) => /^[1-9]\d*$/.test(id) && !used.has(id)) && new Set(mine).size === count) return mine;
   const out: string[] = [];
   for (let n = start; out.length < count; n++) if (!used.has(String(n))) out.push(String(n));
   return out;
@@ -125,6 +125,58 @@ export function parseDotVars(text: string): Record<string, string> {
   return out;
 }
 
+/** The first non-space, non-comment character before `index`, for comma decisions. */
+function prevSignificant(text: string, index: number): string {
+  const head = stripJsonc(text.slice(0, index)).trimEnd();
+  return head[head.length - 1] ?? "";
+}
+
+/** Insert a top-level `"key": value` before the root object's closing brace (no-op when the key exists). */
+export function insertTopLevel(text: string, key: string, valueJson: string, comment?: string): string {
+  if (new RegExp(`"${key}"\\s*:`).test(stripJsonc(text))) return text;
+  const end = text.lastIndexOf("}");
+  if (end < 0) throw new Error("wrangler.mcp.jsonc: no closing brace");
+  const prev = prevSignificant(text, end);
+  const sep = prev === "{" || prev === "," ? "" : ",";
+  const head = text.slice(0, end).trimEnd();
+  return `${head}${sep}\n${comment ? `  // ${comment}\n` : ""}  "${key}": ${valueJson}\n}${text.slice(end + 1)}`;
+}
+
+/** Add an entry to the top-level `ratelimits` array unless one with `name` exists. */
+export function insertRateLimit(text: string, name: string, namespaceId: string, limit: number): string {
+  if (new RegExp(`"name"\\s*:\\s*"${name}"`).test(text)) return text;
+  const start = text.indexOf('"ratelimits"');
+  if (start < 0) {
+    return insertTopLevel(text, "ratelimits", `[{ "name": "${name}", "namespace_id": "${namespaceId}", "simple": { "limit": ${limit}, "period": 60 } }]`);
+  }
+  const close = text.indexOf("]", text.indexOf("[", start));
+  const prev = prevSignificant(text, close);
+  const sep = prev === "[" || prev === "," ? "" : ",";
+  const entry = `    {\n      "name": "${name}",\n      // Ask: per-IP requests per minute (ask.limits.perIpPerMinute)\n      "namespace_id": "${namespaceId}",\n      "simple": { "limit": ${limit}, "period": 60 }\n    }`;
+  return `${text.slice(0, close).trimEnd()}${sep}\n${entry}\n  ${text.slice(close)}`;
+}
+
+/** Add a var to `vars` unless present (then set it). */
+export function upsertVar(text: string, key: string, value: string): string {
+  if (new RegExp(`"${key}"\\s*:`).test(text)) return setJsonValue(text, key, value);
+  const at = text.indexOf("{", text.indexOf('"vars"'));
+  if (text.indexOf('"vars"') < 0 || at < 0) return insertTopLevel(text, "vars", JSON.stringify({ [key]: value }));
+  return `${text.slice(0, at + 1)}\n    ${JSON.stringify(key)}: ${JSON.stringify(value)},${text.slice(at + 1)}`;
+}
+
+/** Hostnames a Turnstile widget must allow: those of the Ask allowed origins, minus localhost. */
+export function turnstileDomains(allowedOrigins: string[]): string[] {
+  const out = new Set<string>();
+  for (const o of allowedOrigins) {
+    const h = new URL(o).hostname;
+    if (h !== "localhost" && h !== "127.0.0.1") out.add(h);
+  }
+  return [...out];
+}
+
+/** Daily Ask job, 02:17 Vietnam time. */
+export const ASK_CRON = "17 19 * * *";
+
 // ── orchestration ──────────────────────────────────────────────────────────
 
 export interface Wrangler {
@@ -143,6 +195,10 @@ export interface SetupOptions {
   wrangler: Wrangler;
   log: (msg: string) => void;
   fetchImpl?: typeof fetch;
+  /** Set when the clone's mcp.config.ts has an `ask` block. */
+  ask?: { allowedOrigins: string[]; perIpPerMinute: number };
+  /** Reads a secret from the terminal without echo (CLI); absent in tests. */
+  promptSecret?: (label: string) => Promise<string>;
 }
 
 interface AccessApp {
@@ -306,6 +362,30 @@ export async function runSetup(o: SetupOptions): Promise<void> {
   await ensureKv("OAUTH_KV", cfg.oauthKvId);
   await ensureKv("CONTENT_KV", cfg.contentKvId);
 
+  // 5b. Ask: D1 database, rate limiter, cron (only with an `ask` block in mcp.config.ts)
+  if (o.ask) {
+    log("5b. Ask bindings");
+    const dbName = `${cfg.workerName}-ask`;
+    const dbs = await api.request<{ uuid: string; name: string }[]>("GET", `${acc}/d1/database?name=${encodeURIComponent(dbName)}`);
+    const dbId =
+      dbs.find((d) => d.name === dbName)?.uuid ??
+      (await act(`create D1 ${dbName}`, async () => (await api.request<{ uuid: string }>("POST", `${acc}/d1/database`, { name: dbName })).uuid, "(new)"));
+    if (!/"binding"\s*:\s*"ASK_DB"/.test(mcpText)) {
+      mcpText = insertTopLevel(
+        mcpText,
+        "d1_databases",
+        JSON.stringify([{ binding: "ASK_DB", database_name: dbName, database_id: dbId, migrations_dir: "kit/ask/migrations" }]),
+        "Ask conversations (kit/ask/store.ts); migrations in kit/ask/migrations",
+      );
+    } else if (/"database_id"\s*:\s*"</.test(mcpText)) {
+      mcpText = setJsonValue(mcpText, "database_id", dbId);
+    }
+    mcpText = insertRateLimit(mcpText, "ASK_RATE_LIMITER", "0", o.ask.perIpPerMinute);
+    mcpText = insertTopLevel(mcpText, "triggers", JSON.stringify({ crons: [ASK_CRON] }), "Ask daily job: topic labels, retention");
+    cfg.namespaceIds = readMcpConfig(mcpText).namespaceIds;
+    log(`  ${dbName} (${dbId}), ASK_RATE_LIMITER ${o.ask.perIpPerMinute}/min, cron ${ASK_CRON}`);
+  }
+
   // 6. Rate-limit namespace ids (unique per account)
   log("6. Rate-limit ids");
   const scripts = await api.request<{ id: string }[]>("GET", `${acc}/workers/scripts`);
@@ -314,7 +394,7 @@ export async function runSetup(o: SetupOptions): Promise<void> {
     const settings = await api.request<{ bindings?: { type: string; namespace_id?: string }[] }>("GET", `${acc}/workers/scripts/${s.id}/settings`).catch(() => ({ bindings: [] }));
     for (const b of settings.bindings ?? []) if (b.type === "ratelimit" && b.namespace_id) used.add(b.namespace_id);
   }
-  const ids = pickNamespaceIds(cfg.namespaceIds, used);
+  const ids = pickNamespaceIds(cfg.namespaceIds, used, Math.max(2, cfg.namespaceIds.length));
   ids.forEach((id, n) => {
     if (id !== cfg.namespaceIds[n]) mcpText = setJsonValue(mcpText, "namespace_id", id, n);
   });
@@ -363,6 +443,62 @@ export async function runSetup(o: SetupOptions): Promise<void> {
     }
     // Non-secret values are written once; the client secret only when the app was just created.
     if (name === "ACCESS_CLIENT_SECRET" || !have.has(name)) await put(name, value);
+  }
+
+  // 8b. Ask: conversation review behind Access, Turnstile widget, secrets
+  if (o.ask) {
+    log("8b. Ask");
+    const convDomain = `${cfg.host}/dash/conversations`;
+    let conv = apps.find((a) => a.type === "self_hosted" && a.domain === convDomain);
+    const convBody = (name: string) => ({ type: "self_hosted", name, domain: convDomain, session_duration: "24h", app_launcher_visible: false });
+    if (conv) {
+      log(`  conversations app exists ("${conv.name}")`);
+      await ensurePolicy(conv, convBody(conv.name));
+    } else {
+      conv = await act(
+        `create the Access app for ${convDomain} (always private, even with DASH_PUBLIC)`,
+        () => api.request<AccessApp>("POST", `${acc}/access/apps`, { ...convBody(`${cfg.workerName} Ask conversations`), policies: [{ id: policyId, precedence: 1 }] }),
+        { id: "", type: "self_hosted", name: "(new)", aud: "(new)" } as AccessApp,
+      );
+    }
+    if (conv.aud && !mcpText.includes(`"ASK_DASH_ACCESS_AUD": ${JSON.stringify(conv.aud)}`)) {
+      mcpText = upsertVar(mcpText, "ASK_DASH_ACCESS_AUD", conv.aud);
+      if (cfg.dashPublic && !/"DASH_ACCESS_TEAM"\s*:\s*"[^<]/.test(mcpText)) mcpText = setJsonValue(mcpText, "DASH_ACCESS_TEAM", team);
+      write();
+    }
+
+    const widgetName = `${cfg.workerName} Ask`;
+    const domains = turnstileDomains(o.ask.allowedOrigins);
+    const widgets = await api.request<{ sitekey: string; name: string; domains: string[] }[]>("GET", `${acc}/challenges/widgets?per_page=100`);
+    let widget = widgets.find((w) => w.name === widgetName);
+    let widgetSecret: string | undefined;
+    if (widget) {
+      log(`  Turnstile widget exists (sitekey ${widget.sitekey})`);
+      if (domains.some((d) => !widget!.domains.includes(d))) {
+        await act(`add ${domains.join(", ")} to the Turnstile widget`, () =>
+          api.request("PUT", `${acc}/challenges/widgets/${widget!.sitekey}`, { name: widgetName, domains, mode: "managed" }), undefined);
+      }
+      if (!have.has("TURNSTILE_SECRET")) {
+        widgetSecret = (await api.request<{ secret?: string }>("GET", `${acc}/challenges/widgets/${widget.sitekey}`)).secret;
+      }
+    } else {
+      const created = await act(
+        `create a Turnstile widget for ${domains.join(", ")}`,
+        () => api.request<{ sitekey: string; secret: string; name: string; domains: string[] }>("POST", `${acc}/challenges/widgets`, { name: widgetName, domains, mode: "managed" }),
+        { sitekey: "(new)", secret: "", name: widgetName, domains },
+      );
+      widget = created;
+      widgetSecret = created.secret;
+    }
+    log(`  Turnstile site key for the website: ${widget.sitekey}`);
+    if (widgetSecret) await put("TURNSTILE_SECRET", widgetSecret);
+    if (!have.has("ASK_SESSION_SECRET")) await put("ASK_SESSION_SECRET", rand());
+    if (!have.has("OPENROUTER_API_KEY")) {
+      const key = process.env["OPENROUTER_API_KEY"] || (o.promptSecret && !o.dryRun ? await o.promptSecret("OpenRouter API key (set a credit limit on it first)") : "");
+      if (key) await put("OPENROUTER_API_KEY", key);
+      else log("  OPENROUTER_API_KEY not set: run `pnpm exec wrangler secret put OPENROUTER_API_KEY -c wrangler.mcp.jsonc`");
+    }
+    await act("apply the Ask D1 migrations", () => wrangler.run(["d1", "migrations", "apply", "ASK_DB", "--remote", "-c", "wrangler.mcp.jsonc"]), "");
   }
 
   // 9. Dashboard proxy key + the shared key registry
@@ -428,6 +564,40 @@ async function smoke(host: string, o: SetupOptions): Promise<void> {
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 
+/** Read a line from the terminal without echoing it. */
+export function promptHidden(label: string): Promise<string> {
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    process.stdout.write(`${label} (input hidden, empty to skip): `);
+    let value = "";
+    const onData = (buf: Uint8Array) => {
+      for (const ch of new TextDecoder().decode(buf)) {
+        if (ch === "\n" || ch === "\r" || ch === "\u0004") {
+          stdin.off("data", onData);
+          if (stdin.isTTY) stdin.setRawMode(false);
+          stdin.pause();
+          process.stdout.write("\n");
+          return resolve(value.trim());
+        }
+        if (ch === "\u0003") process.exit(130);
+        value = ch === "\u007f" ? value.slice(0, -1) : value + ch;
+      }
+    };
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+  });
+}
+
+/** The clone's `ask` block (from mcp.config.ts), or undefined when Ask is off. */
+async function readAskConfig(root: string): Promise<SetupOptions["ask"]> {
+  const path = join(root, "mcp.config.ts");
+  if (!existsSync(path)) return undefined;
+  const mod = (await import(pathToFileURL(path).href)) as { default?: { ask?: { allowedOrigins: string[]; limits?: { perIpPerMinute?: number } } } };
+  const ask = mod.default?.ask;
+  return ask ? { allowedOrigins: ask.allowedOrigins, perIpPerMinute: ask.limits?.perIpPerMinute ?? 6 } : undefined;
+}
+
 export function realWrangler(root: string, env: NodeJS.ProcessEnv): Wrangler {
   return {
     run(args, stdin) {
@@ -472,6 +642,8 @@ if (invokedAsScript) {
       api: createCfApi({ email, key }),
       wrangler: realWrangler(root, env),
       log: (m) => console.log(m),
+      ask: await readAskConfig(root),
+      promptSecret: promptHidden,
     });
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);

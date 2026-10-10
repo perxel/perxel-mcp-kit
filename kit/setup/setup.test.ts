@@ -82,6 +82,8 @@ describe("pickNamespaceIds", () => {
   it("keeps free ids", () => expect(pickNamespaceIds(["3001", "3002"], new Set(["1"]))).toEqual(["3001", "3002"]));
   it("moves to the next free pair on a collision", () =>
     expect(pickNamespaceIds(["3001", "3002"], new Set(["3001", "3002", "3003"]))).toEqual(["3004", "3005"]));
+  it("replaces a placeholder id", () =>
+    expect(pickNamespaceIds(["3001", "3002", "0"], new Set(), 3)).toEqual(["3001", "3002", "3003"]));
   it("replaces the starter ids only when they collide", () =>
     expect(pickNamespaceIds(["1001", "1002"], new Set(["1001"]))).toEqual(["3001", "3002"]));
 });
@@ -163,5 +165,84 @@ describe("runSetup (dry run)", () => {
     expect(logs.join("\n")).toMatch(/\[dry-run\] would create the OIDC sign-in app/);
     expect(logs.join("\n")).toMatch(/\[dry-run\] would create the dashboard app for mcp.demo.com\/dash/);
     expect(logs.join("\n")).toMatch(/3001, 3002 \(updated in config\)/);
+  });
+});
+
+describe("runSetup with Ask (dry run)", () => {
+  it("plans the D1 database, rate limiter, cron, conversations app, Turnstile and secrets", async () => {
+    const { mkdtempSync, writeFileSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { runSetup } = await import("./setup.js");
+    const root = mkdtempSync(join(tmpdir(), "setup-ask-"));
+    writeFileSync(join(root, "wrangler.mcp.jsonc"), WRANGLER);
+    const calls: string[] = [];
+    const logs: string[] = [];
+    const acc = "/accounts/A1";
+    const api = fakeApi(
+      {
+        "GET /accounts": [{ id: "A1", name: "Acme" }],
+        [`GET ${acc}/access/organizations`]: { auth_domain: "acme.cloudflareaccess.com" },
+        [`GET ${acc}/access/policies`]: [],
+        [`GET ${acc}/access/apps`]: [],
+        [`GET ${acc}/storage/kv/namespaces?per_page=100`]: [],
+        [`GET ${acc}/d1/database?name=demo-mcp-ask`]: [],
+        [`GET ${acc}/workers/scripts`]: [],
+        [`GET ${acc}/workers/scripts/demo-mcp/secrets`]: [],
+        [`GET ${acc}/challenges/widgets?per_page=100`]: [],
+      },
+      calls,
+    );
+    let prompted = false;
+    await runSetup({
+      root,
+      email: "me@x.com",
+      emails: ["me@x.com"],
+      policyName: "MCP access",
+      dryRun: true,
+      deploy: false,
+      api,
+      wrangler: { run: () => { throw new Error("wrangler must not run in a dry run"); } },
+      log: (m) => logs.push(m),
+      ask: { allowedOrigins: ["https://demo.com", "http://localhost:3000"], perIpPerMinute: 6 },
+      promptSecret: async () => {
+        prompted = true;
+        return "sk";
+      },
+    });
+    const out = logs.join("\n");
+    expect(calls.every((c) => c.startsWith("GET"))).toBe(true);
+    expect(readFileSync(join(root, "wrangler.mcp.jsonc"), "utf8")).toBe(WRANGLER);
+    expect(prompted).toBe(false);
+    expect(out).toMatch(/would create D1 demo-mcp-ask/);
+    expect(out).toMatch(/ASK_RATE_LIMITER 6\/min/);
+    expect(out).toMatch(/would create the Access app for mcp.demo.com\/dash\/conversations/);
+    expect(out).toMatch(/would create a Turnstile widget for demo.com$/m);
+    expect(out).toMatch(/would set ASK_SESSION_SECRET/);
+    expect(out).toMatch(/would apply the Ask D1 migrations/);
+    expect(out).toMatch(/3001, 3002, 3003 \(updated in config\)/);
+  });
+});
+
+describe("ask config edits", () => {
+  it("adds the D1 block, the Ask rate limiter and the cron once, keeping the file valid", async () => {
+    const { insertTopLevel, insertRateLimit, upsertVar, ASK_CRON } = await import("./setup.js");
+    let t = insertTopLevel(WRANGLER, "d1_databases", JSON.stringify([{ binding: "ASK_DB", database_id: "x" }]), "Ask");
+    t = insertRateLimit(t, "ASK_RATE_LIMITER", "0", 6);
+    t = insertTopLevel(t, "triggers", JSON.stringify({ crons: [ASK_CRON] }));
+    t = upsertVar(t, "ASK_DASH_ACCESS_AUD", "aud-1");
+    const again = upsertVar(insertTopLevel(insertRateLimit(t, "ASK_RATE_LIMITER", "0", 6), "triggers", "{}"), "ASK_DASH_ACCESS_AUD", "aud-2");
+    const parsed = JSON.parse(stripJsonc(again));
+    expect(parsed.d1_databases[0].binding).toBe("ASK_DB");
+    expect(parsed.ratelimits.map((r: { name: string }) => r.name)).toEqual(["A", "B", "ASK_RATE_LIMITER"]);
+    expect(parsed.ratelimits[2].simple.limit).toBe(6);
+    expect(parsed.triggers.crons).toEqual([ASK_CRON]);
+    expect(parsed.vars.ASK_DASH_ACCESS_AUD).toBe("aud-2");
+    expect(parsed.vars.MCP_PUBLIC_URL).toBe("https://mcp.demo.com");
+  });
+
+  it("lists Turnstile domains without localhost", async () => {
+    const { turnstileDomains } = await import("./setup.js");
+    expect(turnstileDomains(["https://perxel.com", "http://localhost:3000", "https://perxel.com"])).toEqual(["perxel.com"]);
   });
 });
