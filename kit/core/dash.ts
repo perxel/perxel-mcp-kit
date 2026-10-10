@@ -480,7 +480,7 @@ ${panelError(get("totals"))}
 
 type DashLog = (event: string, fields?: Record<string, unknown>) => void;
 
-function isLocalHost(url: URL): boolean {
+export function isLocalHost(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1";
 }
 
