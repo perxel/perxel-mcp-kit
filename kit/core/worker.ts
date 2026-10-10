@@ -10,6 +10,7 @@ import {
   type OAuthHelpers,
 } from "@cloudflare/workers-oauth-provider";
 import { runAskCron } from "../ask/cron.js";
+import { handleConversations, isConversationsPath } from "../ask/conversations.js";
 import { ASK_PATHS, handleAsk } from "../ask/handler.js";
 import { callerKeyFor, clientFamily } from "./caller.js";
 import { handleAuthorizeGet, handleAuthorizePost, handleCallback } from "./access.js";
@@ -539,6 +540,12 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
     }
 
     const dashPath = dashPathFor(env);
+    // Ask conversation review: always behind Access, even with DASH_PUBLIC=true.
+    if (dashPath && config.ask && isConversationsPath(path, dashPath)) {
+      const res = await handleConversations(request, env, config, dashPath);
+      log("request", { route: "dash-conversations", method: request.method, status: res.status });
+      return res;
+    }
     if (dashPath && isDashPath(path, dashPath)) {
       const res = await handleDash(request, env, config, dashPath, log);
       log("request", { route: "dash", method: request.method, status: res.status });

@@ -40,6 +40,8 @@ export interface Env {
   TURNSTILE_SECRET?: string;
   /** Ask: HMAC key for session tokens (secret, random). */
   ASK_SESSION_SECRET?: string;
+  /** Ask: AUD tag of the Access app on <host>/dash/conversations; defaults to DASH_ACCESS_AUD. */
+  ASK_DASH_ACCESS_AUD?: string;
   /** Ask, local dev only: Langfuse keys "publicKey:secretKey" for evals. Never set in production. */
   ASK_DEV_LANGFUSE?: string;
   [key: string]: unknown;

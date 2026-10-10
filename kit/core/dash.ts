@@ -135,7 +135,7 @@ function bucketMs(v: unknown): number | null {
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
@@ -500,7 +500,7 @@ function isLocalDev(request: Request, env: Env): boolean {
   }
 }
 
-const DASH_HEADERS = {
+export const DASH_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "cache-control": "no-store",
   "x-robots-tag": "noindex",
@@ -509,7 +509,7 @@ const DASH_HEADERS = {
   "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'",
 };
 
-function plainPage(status: number, title: string, message: string): Response {
+export function plainPage(status: number, title: string, message: string): Response {
   const html = `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>${escapeHtml(
     title,
   )}</title><body style="font:14px/1.5 sans-serif;max-width:560px;margin:60px auto;padding:0 16px"><h1 style="font-size:18px">${escapeHtml(
@@ -529,11 +529,17 @@ interface AccessJwtClaims {
  * Checks the Access assertion. Returns the viewer email (or "" when the token
  * carries none) on success, or the Response to send.
  */
-export async function checkDashAccess(request: Request, env: Env, now: number): Promise<{ viewer: string } | Response> {
+export async function checkDashAccess(
+  request: Request,
+  env: Env,
+  now: number,
+  opts: { ignorePublic?: boolean; aud?: unknown } = {},
+): Promise<{ viewer: string } | Response> {
   if (isLocalDev(request, env)) return { viewer: "" };
-  if (env.DASH_PUBLIC === "true") return { viewer: "" };
+  if (env.DASH_PUBLIC === "true" && !opts.ignorePublic) return { viewer: "" };
   const team = typeof env.DASH_ACCESS_TEAM === "string" ? env.DASH_ACCESS_TEAM.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "") : "";
-  const aud = typeof env.DASH_ACCESS_AUD === "string" ? env.DASH_ACCESS_AUD.trim() : "";
+  const audRaw = opts.aud !== undefined ? opts.aud : env.DASH_ACCESS_AUD;
+  const aud = typeof audRaw === "string" ? audRaw.trim() : "";
   if (!team || !aud) {
     return plainPage(
       503,
