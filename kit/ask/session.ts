@@ -7,7 +7,8 @@
  * Verification uses `crypto.subtle.verify`, which compares in constant time.
  */
 
-export const SESSION_TTL_MS = 30 * 60 * 1000;
+/** Default token life; `ask.sessionHours` overrides it (handler passes `ttlMs`). */
+export const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 const encoder = new TextEncoder();
 
@@ -34,9 +35,9 @@ function fromBase64Url(s: string): Uint8Array | null {
   }
 }
 
-/** A fresh token for `conversationId`, valid for `SESSION_TTL_MS` from `now`. */
-export async function issueSession(secret: string, conversationId: string, now = Date.now()): Promise<string> {
-  const expiry = now + SESSION_TTL_MS;
+/** A fresh token for `conversationId`, valid for `ttlMs` from `now`. */
+export async function issueSession(secret: string, conversationId: string, now = Date.now(), ttlMs = SESSION_TTL_MS): Promise<string> {
+  const expiry = now + ttlMs;
   const sig = await crypto.subtle.sign("HMAC", await hmacKey(secret), encoder.encode(`${conversationId}.${expiry}`));
   return `${expiry}.${toBase64Url(new Uint8Array(sig))}`;
 }

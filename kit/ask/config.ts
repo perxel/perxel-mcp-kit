@@ -45,11 +45,15 @@ export interface AskConfig {
   topics: string[];
   /** Days before conversation text is deleted (default 90). */
   retentionDays?: number;
+  /** Hours a session token stays valid after the last answer (default 24). After that the
+   * next turn needs a new Turnstile token; the conversation itself carries on. */
+  sessionHours?: number;
   limits?: AskLimits;
 }
 
 export const ASK_DEFAULTS = {
   retentionDays: 90,
+  sessionHours: 24,
   messagesPerConversation: 20,
   maxInputChars: 1000,
   maxOutputTokens: 700,
@@ -113,6 +117,7 @@ export function validateAskConfig(ask: AskConfig): void {
     }
   };
   positive("retentionDays", ask.retentionDays);
+  positive("sessionHours", ask.sessionHours);
   for (const [k, v] of Object.entries(ask.limits ?? {})) positive(`limits.${k}`, v as number | undefined);
 }
 

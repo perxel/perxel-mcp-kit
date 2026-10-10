@@ -43,6 +43,7 @@ describe("ask config", () => {
     ["duplicate topics", { topics: ["a", "a"] }],
     ["bad topic", { topics: ["Has Space"] }],
     ["zero retention", { retentionDays: 0 }],
+    ["zero session hours", { sessionHours: 0 }],
     ["negative limit", { limits: { maxInputChars: -1 } }],
     ["NaN limit", { limits: { dailyBudgetUsd: Number.NaN } }],
     ["half prompt", { systemPrompt: { vi: "x" } as unknown as AskConfig["systemPrompt"] }],

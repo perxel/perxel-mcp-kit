@@ -16,6 +16,12 @@ describe("session tokens", () => {
     expect(await verifySession(SECRET, ID, t, 1_000 + SESSION_TTL_MS)).toBe("expired");
   });
 
+  it("takes its life from ttlMs (ask.sessionHours)", async () => {
+    const t = await issueSession(SECRET, ID, 1_000, 2 * 3_600_000);
+    expect(await verifySession(SECRET, ID, t, 1_000 + 2 * 3_600_000 - 1)).toBe("ok");
+    expect(await verifySession(SECRET, ID, t, 1_000 + 2 * 3_600_000)).toBe("expired");
+  });
+
   it("is bound to the conversation id and the secret", async () => {
     const t = await issueSession(SECRET, ID, 1_000);
     expect(await verifySession(SECRET, "other-id", t, 2_000)).toBe("invalid");

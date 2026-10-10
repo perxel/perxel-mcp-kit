@@ -16,7 +16,7 @@ import { vietnamDate } from "../core/date.js";
 import type { Env } from "../core/env.js";
 import type { AskTurnRow } from "../core/metrics.js";
 import type { ToolContext } from "../core/tool.js";
-import { askLimits, type AskConfig, type AskLocale } from "./config.js";
+import { ASK_DEFAULTS, askLimits, type AskConfig, type AskLocale } from "./config.js";
 import { allowedOrigin, preflight, withCors } from "./cors.js";
 import { cloudflareAskLogger, type AskLogger } from "./logger.js";
 import { askInstructions, summaryInstructions } from "./prompt.js";
@@ -377,7 +377,7 @@ export async function handleAsk(
     onError: onStreamError,
   });
 
-  const token = await issueSession(secret, body.id, now());
+  const token = await issueSession(secret, body.id, now(), (ask.sessionHours ?? ASK_DEFAULTS.sessionHours) * 3_600_000);
   return withCors(createUIMessageStreamResponse({ stream, headers: { "x-ask-session": token } }), origin);
 }
 

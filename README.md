@@ -387,14 +387,15 @@ ask: {
   allowedOrigins: ["https://example.com"],     // exact origins; localhost only in local dev
   handoff: [{ label: "Contact", href: "https://example.com/contact" }],
   topics: ["pricing", "process"],              // + "other"
-  retentionDays: 90,
+  retentionDays: 90,                           // conversation text deleted after this
+  sessionHours: 24,                            // x-ask-session life after the last answer; then Turnstile again, same conversation
   limits: { messagesPerConversation: 20, maxInputChars: 1000, maxOutputTokens: 700, maxToolSteps: 4, perIpPerMinute: 6, dailyBudgetUsd: 3 },
 }
 ```
 
 | Path | What |
 |---|---|
-| `POST /ask` | One visitor turn. Body: `useChat`'s `{ id (UUID), messages }` plus `locale` (`vi`/`en`), `page`, and `turnstileToken` on the first turn. Answers with an AI SDK UI message stream (text, `source-url` parts built from tool results, a `suggest_handoff` tool part). Returns `x-ask-session` (HMAC, 30 min, sliding) for later turns. |
+| `POST /ask` | One visitor turn. Body: `useChat`'s `{ id (UUID), messages }` plus `locale` (`vi`/`en`), `page`, and `turnstileToken` on the first turn. Answers with an AI SDK UI message stream (text, `source-url` parts built from tool results, a `suggest_handoff` tool part). Returns `x-ask-session` (HMAC, `sessionHours`, default 24 h, sliding; once expired, send a fresh `turnstileToken` without the header and the same `id` carries on) for later turns. |
 | `POST /ask/summary` | `{ id }` + session: a 1 to 3 sentence summary of what the visitor wants, for a lead form. Once per 5 minutes per conversation. |
 | `POST /ask/lead` | `{ id }` + session: marks the conversation as having sent a lead. |
 | `GET /dash/conversations` | Review page (stripped text, tools, cited pages; keep a question, delete a conversation). **Always behind Access**, even with `DASH_PUBLIC=true`. |

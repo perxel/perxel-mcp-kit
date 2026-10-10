@@ -209,8 +209,8 @@ describe("POST /ask refusals", () => {
     expect(code(body)).toBe("verify_failed");
   });
 
-  it("session_expired: a token older than 30 minutes", async () => {
-    const old = await issueSession(SECRET, ID, NOW - 31 * 60 * 1000);
+  it("session_expired: a token older than 24 hours", async () => {
+    const old = await issueSession(SECRET, ID, NOW - 25 * 60 * 60 * 1000);
     const { res, body } = await setup().run(req(askBody("hi"), { session: old }));
     expect(res.status).toBe(401);
     expect(code(body)).toBe("session_expired");
