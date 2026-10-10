@@ -234,3 +234,34 @@ export async function deleteConversation(db: D1Database, id: string): Promise<vo
 export async function addCost(db: D1Database, id: string, costUsd: number): Promise<void> {
   await db.prepare("UPDATE conversations SET cost_usd = cost_usd + ? WHERE id = ?").bind(costUsd, id).run();
 }
+
+export interface TopicCountRow {
+  topic: string;
+  n: number;
+}
+
+export async function askTopicCounts(db: D1Database, sinceMs: number): Promise<TopicCountRow[]> {
+  const res = await db
+    .prepare(
+      "SELECT COALESCE(topic, 'unlabelled') AS topic, COUNT(*) AS n FROM conversations WHERE last_at >= ? GROUP BY topic ORDER BY n DESC",
+    )
+    .bind(sinceMs)
+    .all<TopicCountRow>();
+  return res.results;
+}
+
+export interface OutcomeCounts {
+  answered: number;
+  handedOff: number;
+  leads: number;
+}
+
+export async function askOutcomeCounts(db: D1Database, sinceMs: number): Promise<OutcomeCounts> {
+  const res = await db
+    .prepare(
+      "SELECT SUM(CASE WHEN handoff = 0 AND lead_sent = 0 THEN 1 ELSE 0 END) AS answered, SUM(CASE WHEN handoff = 1 THEN 1 ELSE 0 END) AS handedOff, SUM(CASE WHEN lead_sent = 1 THEN 1 ELSE 0 END) AS leads FROM conversations WHERE last_at >= ?",
+    )
+    .bind(sinceMs)
+    .first<OutcomeCounts>();
+  return res ?? { answered: 0, handedOff: 0, leads: 0 };
+}
