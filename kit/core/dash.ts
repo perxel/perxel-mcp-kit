@@ -58,6 +58,8 @@ export function isDashPath(path: string, dashPath: string): boolean {
 
 type PanelId = "totals" | "timeline" | "latency" | "tools" | "clients" | "auth" | "countries" | "errors";
 
+const EXCLUDE_ASK_TURN = " AND blob2 != 'ask.turn'";
+
 /** The fixed SQL per panel. Every query reads only `dataset` and ends in FORMAT JSON. */
 export function dashQueries(dataset: string, range: DashRange): Record<PanelId, string> {
   const r = DASH_RANGES[range];
@@ -65,32 +67,53 @@ export function dashQueries(dataset: string, range: DashRange): Record<PanelId, 
   const bucket = `toStartOfInterval(timestamp, INTERVAL '${r.bucketHours}' HOUR)`;
   const calls = "sum(_sample_interval) AS calls";
   const breakdown = (col: string) =>
-    `SELECT ${col} AS k, ${calls} FROM ${dataset} WHERE ${since} GROUP BY k ORDER BY calls DESC LIMIT 10 FORMAT JSON`;
+    `SELECT ${col} AS k, ${calls} FROM ${dataset} WHERE ${since}${EXCLUDE_ASK_TURN} GROUP BY k ORDER BY calls DESC LIMIT 10 FORMAT JSON`;
   return {
     totals:
       `SELECT ${calls}, sumIf(_sample_interval, blob3 != 'ok') AS not_ok, ` +
       `sumIf(_sample_interval, blob3 = 'rate_limited') AS rate_limited, ` +
       `quantileExactWeighted(0.95)(double1, _sample_interval) AS p95_ms, count(DISTINCT index1) AS callers ` +
-      `FROM ${dataset} WHERE ${since} FORMAT JSON`,
+      `FROM ${dataset} WHERE ${since}${EXCLUDE_ASK_TURN} FORMAT JSON`,
     timeline:
-      `SELECT ${bucket} AS t, blob3 AS status, ${calls} FROM ${dataset} WHERE ${since} ` +
+      `SELECT ${bucket} AS t, blob3 AS status, ${calls} FROM ${dataset} WHERE ${since}${EXCLUDE_ASK_TURN} ` +
       `GROUP BY t, status ORDER BY t FORMAT JSON`,
     latency:
       `SELECT ${bucket} AS t, quantileExactWeighted(0.5)(double1, _sample_interval) AS p50_ms, ` +
-      `quantileExactWeighted(0.95)(double1, _sample_interval) AS p95_ms FROM ${dataset} WHERE ${since} ` +
+      `quantileExactWeighted(0.95)(double1, _sample_interval) AS p95_ms FROM ${dataset} WHERE ${since}${EXCLUDE_ASK_TURN} ` +
       `GROUP BY t ORDER BY t FORMAT JSON`,
     tools:
       `SELECT blob2 AS tool, ${calls}, sumIf(_sample_interval, blob3 != 'ok') AS not_ok, ` +
       `quantileExactWeighted(0.5)(double1, _sample_interval) AS p50_ms, ` +
       `quantileExactWeighted(0.95)(double1, _sample_interval) AS p95_ms, ` +
       `sumIf(_sample_interval, double2 >= 0) AS lists, sumIf(double2 * _sample_interval, double2 >= 0) AS items ` +
-      `FROM ${dataset} WHERE ${since} GROUP BY tool ORDER BY calls DESC LIMIT 20 FORMAT JSON`,
+      `FROM ${dataset} WHERE ${since}${EXCLUDE_ASK_TURN} GROUP BY tool ORDER BY calls DESC LIMIT 20 FORMAT JSON`,
     clients: breakdown("blob5"),
     auth: breakdown("blob7"),
     countries: breakdown("blob8"),
     errors:
       `SELECT blob2 AS tool, blob3 AS status, blob4 AS code, ${calls} FROM ${dataset} ` +
-      `WHERE ${since} AND blob3 != 'ok' GROUP BY tool, status, code ORDER BY calls DESC LIMIT 10 FORMAT JSON`,
+      `WHERE ${since}${EXCLUDE_ASK_TURN} AND blob3 != 'ok' GROUP BY tool, status, code ORDER BY calls DESC LIMIT 10 FORMAT JSON`,
+  };
+}
+
+export interface AskDashQueries {
+  askTimeline: string;
+  askCost: string;
+}
+
+/** Ask-specific Analytics Engine queries. Returns empty object when ask is not configured. */
+export function askDashQueries(dataset: string, range: DashRange): AskDashQueries {
+  const r = DASH_RANGES[range];
+  const since = `timestamp > now() - INTERVAL '${r.hours}' HOUR`;
+  const bucket = `toStartOfInterval(timestamp, INTERVAL '${r.bucketHours}' HOUR)`;
+  const calls = "sum(_sample_interval) AS calls";
+  return {
+    askTimeline:
+      `SELECT ${bucket} AS t, ${calls} FROM ${dataset} WHERE ${since} AND blob2 = 'ask.turn' AND blob3 = 'ok' ` +
+      `GROUP BY t ORDER BY t FORMAT JSON`,
+    askCost:
+      `SELECT ${bucket} AS t, sum(double3 * _sample_interval) / 1000000 AS usd FROM ${dataset} WHERE ${since} AND blob2 = 'ask.turn' AND blob3 = 'ok' ` +
+      `GROUP BY t ORDER BY t FORMAT JSON`,
   };
 }
 
@@ -135,7 +158,7 @@ function bucketMs(v: unknown): number | null {
   return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
 }
 
-function escapeHtml(s: string): string {
+export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
@@ -291,10 +314,13 @@ export interface DashPageInput {
   /** Why data is missing entirely (no binding/key), or null. */
   notice: string | null;
   panels: Partial<Record<PanelId, PanelResult>>;
+  askPanels?: { askTimeline?: PanelResult; askCost?: PanelResult };
+  askTopicCounts?: { topic: string; n: number }[];
+  askOutcomeCounts?: { answered: number; handedOff: number; leads: number };
 }
 
 export function renderDashPage(input: DashPageInput): string {
-  const { config, dashPath, range, now, viewer, notice, panels } = input;
+  const { config, dashPath, range, now, viewer, notice, panels, askPanels, askTopicCounts, askOutcomeCounts } = input;
   const r = DASH_RANGES[range];
   const get = (id: PanelId): PanelResult => panels[id] ?? { rows: [] };
 
@@ -383,6 +409,47 @@ export function renderDashPage(input: DashPageInput): string {
     timeStyle: "short",
   }).format(new Date(now));
 
+  let askSection = "";
+  if (config.ask) {
+    const askTimelineRows = rowsOf(askPanels?.askTimeline ?? { rows: [] });
+    const askCostRows = rowsOf(askPanels?.askCost ?? { rows: [] });
+
+    const askTurnsByBucket = new Map<number, number>();
+    for (const row of askTimelineRows) {
+      const b = bucketMs(row["t"]);
+      const v = num(row["calls"]);
+      if (b !== null && v !== null) askTurnsByBucket.set(b, v);
+    }
+
+    const askCostByBucket = new Map<number, number>();
+    for (const row of askCostRows) {
+      const b = bucketMs(row["t"]);
+      const v = num(row["usd"]);
+      if (b !== null && v !== null) askCostByBucket.set(b, v);
+    }
+
+    const askTurnsSeries = [{ name: "Ask turns", cls: "ask-turns", values: askTurnsByBucket }];
+    const askCostSeries = [{ name: "Cost (USD)", cls: "ask-cost", values: askCostByBucket }];
+
+    const outcomeRows = askOutcomeCounts
+      ? [
+          { label: "Answered", value: askOutcomeCounts.answered },
+          { label: "Handed off", value: askOutcomeCounts.handedOff },
+          { label: "Leads", value: askOutcomeCounts.leads },
+        ].filter((r) => r.value > 0)
+      : [];
+
+    const topicRows = (askTopicCounts ?? []).map((r) => ({ label: r.topic, value: r.n }));
+
+    askSection = `
+<div class="card"><h2>Ask turns per bucket</h2>${panelError(askPanels?.askTimeline ?? { rows: [] })}${lineChart(buckets, askTurnsSeries, r.bucketHours)}</div>
+<div class="card"><h2>Ask cost trend (USD)</h2>${panelError(askPanels?.askCost ?? { rows: [] })}${lineChart(buckets, askCostSeries, r.bucketHours)}</div>
+<div class="grid2">
+  <div class="card"><h2>Outcomes</h2>${barList(outcomeRows, "No conversations in this range.")}</div>
+  <div class="card"><h2>Top topics</h2>${barList(topicRows, "No topics in this range.")}</div>
+</div>`;
+  }
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -392,7 +459,7 @@ export function renderDashPage(input: DashPageInput): string {
 <title>${escapeHtml(config.name)} · Dashboard</title>
 <style>
   :root { color-scheme: light dark; --fg: #111; --muted: #666; --line: rgba(127,127,127,0.22); --card: rgba(127,127,127,0.07);
-    --ok: #8a8f98; --invalid: #d4a017; --error: #d64545; --unauth: #4a7fd6; --forbidden: #7a5cd6; --limited: #c2410c; --other: #999; --p50: #4a7fd6; --p95: #d64545; }
+    --ok: #8a8f98; --invalid: #d4a017; --error: #d64545; --unauth: #4a7fd6; --forbidden: #7a5cd6; --limited: #c2410c; --other: #999; --p50: #4a7fd6; --p95: #d64545; --ask-turns: #4a7fd6; --ask-cost: #d64545; }
   @media (prefers-color-scheme: dark) { :root { --fg: #eee; --muted: #999; } }
   * { box-sizing: border-box; }
   body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); max-width: 1040px; margin: 32px auto; padding: 0 16px; }
@@ -416,7 +483,7 @@ export function renderDashPage(input: DashPageInput): string {
   .s-error { fill: var(--error); background: var(--error); } .s-unauthorized { fill: var(--unauth); background: var(--unauth); }
   .s-forbidden { fill: var(--forbidden); background: var(--forbidden); } .s-rate_limited { fill: var(--limited); background: var(--limited); }
   .s-other { fill: var(--other); background: var(--other); }
-  .l-p50 { stroke: var(--p50); } .l-p95 { stroke: var(--p95); }
+  .l-p50 { stroke: var(--p50); } .l-p95 { stroke: var(--p95); } .l-ask-turns { stroke: var(--ask-turns); } .l-ask-cost { stroke: var(--ask-cost); }
   .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .legend i.l-p50 { background: var(--p50); } .legend i.l-p95 { background: var(--p95); }
@@ -471,6 +538,7 @@ ${panelError(get("totals"))}
       : `<p class="muted">No failed calls in this range.</p>`
   }</div>
 
+${askSection}
 <footer>${escapeHtml(config.slug)} v${escapeHtml(config.version)}${viewer ? ` · signed in as ${escapeHtml(viewer)}` : ""} · data: Analytics Engine <code>${escapeHtml(
     datasetFor(config.slug),
   )}</code>, sampled counts</footer>
@@ -480,7 +548,7 @@ ${panelError(get("totals"))}
 
 type DashLog = (event: string, fields?: Record<string, unknown>) => void;
 
-function isLocalHost(url: URL): boolean {
+export function isLocalHost(url: URL): boolean {
   return url.hostname === "localhost" || url.hostname === "127.0.0.1";
 }
 
@@ -500,7 +568,7 @@ function isLocalDev(request: Request, env: Env): boolean {
   }
 }
 
-const DASH_HEADERS = {
+export const DASH_HEADERS = {
   "content-type": "text/html; charset=utf-8",
   "cache-control": "no-store",
   "x-robots-tag": "noindex",
@@ -509,7 +577,7 @@ const DASH_HEADERS = {
   "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'",
 };
 
-function plainPage(status: number, title: string, message: string): Response {
+export function plainPage(status: number, title: string, message: string): Response {
   const html = `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>${escapeHtml(
     title,
   )}</title><body style="font:14px/1.5 sans-serif;max-width:560px;margin:60px auto;padding:0 16px"><h1 style="font-size:18px">${escapeHtml(
@@ -529,11 +597,17 @@ interface AccessJwtClaims {
  * Checks the Access assertion. Returns the viewer email (or "" when the token
  * carries none) on success, or the Response to send.
  */
-export async function checkDashAccess(request: Request, env: Env, now: number): Promise<{ viewer: string } | Response> {
+export async function checkDashAccess(
+  request: Request,
+  env: Env,
+  now: number,
+  opts: { ignorePublic?: boolean; aud?: unknown } = {},
+): Promise<{ viewer: string } | Response> {
   if (isLocalDev(request, env)) return { viewer: "" };
-  if (env.DASH_PUBLIC === "true") return { viewer: "" };
+  if (env.DASH_PUBLIC === "true" && !opts.ignorePublic) return { viewer: "" };
   const team = typeof env.DASH_ACCESS_TEAM === "string" ? env.DASH_ACCESS_TEAM.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "") : "";
-  const aud = typeof env.DASH_ACCESS_AUD === "string" ? env.DASH_ACCESS_AUD.trim() : "";
+  const audRaw = opts.aud !== undefined ? opts.aud : env.DASH_ACCESS_AUD;
+  const aud = typeof audRaw === "string" ? audRaw.trim() : "";
   if (!team || !aud) {
     return plainPage(
       503,
@@ -582,6 +656,10 @@ export async function handleDash(
 
   let notice: string | null = null;
   const panels: Partial<Record<PanelId, PanelResult>> = {};
+  let askPanels: { askTimeline?: PanelResult; askCost?: PanelResult } = {};
+  let askTopicCounts: { topic: string; n: number }[] = [];
+  let askOutcomeCounts: { answered: number; handedOff: number; leads: number } = { answered: 0, handedOff: 0, leads: 0 };
+
   if (!env.METRICS_PROXY || typeof env.METRICS_PROXY.fetch !== "function") {
     notice = "No metrics proxy bound (METRICS_PROXY service binding): showing an empty dashboard.";
   } else if (!env.DASH_PROXY_KEY) {
@@ -591,8 +669,41 @@ export async function handleDash(
     const ids = Object.keys(queries) as PanelId[];
     const results = await Promise.all(ids.map((id) => runQuery(env, queries[id], log)));
     ids.forEach((id, i) => (panels[id] = results[i]));
+
+    if (config.ask) {
+      const askQueries = askDashQueries(datasetFor(config.slug), range);
+      const askResults = await Promise.all(
+        Object.entries(askQueries).map(([id, sql]) => runQuery(env, sql, log)),
+      );
+      askPanels = { askTimeline: askResults[0], askCost: askResults[1] };
+
+    }
   }
 
-  const html = renderDashPage({ config, dashPath, range, now, viewer: access.viewer || null, notice, panels });
+  // Ask counts come from D1, not the metrics proxy: shown even without the proxy, and a D1
+  // failure leaves them empty instead of failing the page.
+  if (config.ask && env.ASK_DB) {
+    try {
+      const store = await import("../ask/store.js");
+      const sinceMs = now - DASH_RANGES[range].hours * 3_600_000;
+      askTopicCounts = await store.askTopicCounts(env.ASK_DB, sinceMs);
+      askOutcomeCounts = await store.askOutcomeCounts(env.ASK_DB, sinceMs);
+    } catch (err) {
+      log("dash.ask_db_failed", { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  const html = renderDashPage({
+    config,
+    dashPath,
+    range,
+    now,
+    viewer: access.viewer || null,
+    notice,
+    panels,
+    askPanels,
+    askTopicCounts,
+    askOutcomeCounts,
+  });
   return new Response(request.method === "HEAD" ? null : html, { headers: DASH_HEADERS });
 }

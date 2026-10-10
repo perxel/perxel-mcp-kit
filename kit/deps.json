@@ -2,6 +2,8 @@
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "1.2.1",
     "@modelcontextprotocol/server": "2.2.0",
+    "@openrouter/ai-sdk-provider": "3.1.0",
+    "ai": "7.0.116",
     "zod": "4.6.5"
   },
   "devDependencies": {

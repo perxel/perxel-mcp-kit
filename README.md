@@ -8,8 +8,10 @@ Source-available under the PolyForm Shield 1.0.0 license (`LICENSE`): free
 to use and modify, not to resell or offer as a competing service. This is
 **not** open source (OSI).
 
-v1 is tested and supported for **Claude only** (claude.ai web, Desktop,
-mobile, Claude Code).
+The MCP itself is tested and supported for **Claude** (claude.ai web, Desktop,
+mobile, Claude Code). The optional **Ask** add-on (an on-site chat over the
+same tools, see [Ask](#ask-optional-on-site-chat)) runs on any model through
+OpenRouter.
 
 ## Infrastructure
 
@@ -33,6 +35,8 @@ separate dashboard host, no hosted Inspector.
                         │     ▼                                                       │
                         │  Analytics Engine dataset  mcp_<slug>  (written by /mcp)    │
                         │  KV: OAUTH_KV, CONTENT_KV  ·  Access: sign-in app, /dash app │
+ Website (Ask, opt.) ─▶ │   /ask  ─▶ OpenRouter (model)   D1 ASK_DB  ·  cron daily    │
+   CORS + Turnstile     │   /dash/conversations ◀─ its own Access app, always private │
                         └─────────────────────────────────────────────────────────────┘
  Your laptop: MCP Inspector (`pnpm dev` / `pnpm inspect`), never deployed.
 ```
@@ -366,6 +370,63 @@ pnpm kit:update [ref] [--from <local path>]
 - Clone-owned files the kit changed in a release (wrangler configs,
   `package.json` scripts) are listed in that release's commit message; copy
   those changes by hand.
+
+## Ask (optional on-site chat)
+
+Ask answers a website's visitors from the MCP's own **public** tools, called
+in process (not over MCP), through a model on OpenRouter (AI SDK). Add an
+`ask` block to `mcp.config.ts` to switch it on; without one, none of the
+routes below exist (404).
+
+```ts
+ask: {
+  model: "<openrouter model id>",
+  fallbackModels: ["<another id>"],            // optional
+  summaryModel: "<cheaper id>",                // optional: summaries, topic labels
+  systemPrompt: { vi: "…", en: "…" },          // the client's facts and voice; appended to the kit's rules (kit/ask/prompt.ts)
+  allowedOrigins: ["https://example.com"],     // exact origins; localhost only in local dev
+  handoff: [{ label: "Contact", href: "https://example.com/contact" }],
+  topics: ["pricing", "process"],              // + "other"
+  retentionDays: 90,
+  limits: { messagesPerConversation: 20, maxInputChars: 1000, maxOutputTokens: 700, maxToolSteps: 4, perIpPerMinute: 6, dailyBudgetUsd: 3 },
+}
+```
+
+| Path | What |
+|---|---|
+| `POST /ask` | One visitor turn. Body: `useChat`'s `{ id (UUID), messages }` plus `locale` (`vi`/`en`), `page`, and `turnstileToken` on the first turn. Answers with an AI SDK UI message stream (text, `source-url` parts built from tool results, a `suggest_handoff` tool part). Returns `x-ask-session` (HMAC, 30 min, sliding) for later turns. |
+| `POST /ask/summary` | `{ id }` + session: a 1 to 3 sentence summary of what the visitor wants, for a lead form. Once per 5 minutes per conversation. |
+| `POST /ask/lead` | `{ id }` + session: marks the conversation as having sent a lead. |
+| `GET /dash/conversations` | Review page (stripped text, tools, cited pages; keep a question, delete a conversation). **Always behind Access**, even with `DASH_PUBLIC=true`. |
+
+Checks run cheapest first: origin → body → session or Turnstile → per-IP
+limit (`ASK_RATE_LIMITER`) → conversation cap (D1) → daily budget (D1 spend,
+cached 60 s) → model. Errors are JSON `{ code }`: `origin`, `bad_request`,
+`verify_failed`, `session_expired`, `rate_limited`, `conversation_limit`,
+`budget`, `upstream`. Only the last user message is read from the request;
+the history comes from D1, so a client can't write the assistant's turns.
+
+Privacy: every visitor message is stripped of emails, phone numbers and long
+numbers (`kit/ask/redact.ts`) before it is stored; the raw text goes to the
+model only. A daily cron labels idle conversations with a topic and deletes
+message text after `retentionDays` (the conversation row, with no visitor
+text, stays). OpenRouter requests use `provider.data_collection: "deny"`.
+
+Bindings and secrets (all created by `pnpm setup:cloudflare` when the config
+has `ask`): D1 `ASK_DB` (migrations in `kit/ask/migrations`), rate limiter
+`ASK_RATE_LIMITER`, a cron trigger, the Access app on
+`<host>/dash/conversations` (`ASK_DASH_ACCESS_AUD`), a Turnstile widget for
+the allowed origins (its site key goes in the website), and the secrets
+`OPENROUTER_API_KEY` (prompted, never written to disk; set a credit limit on
+the key in OpenRouter first), `TURNSTILE_SECRET`, `ASK_SESSION_SECRET`.
+
+Local dev: run `wrangler dev` with Cloudflare's Turnstile test secret
+`1x0000000000000000000000000000000AA` in `.dev.vars`, then
+`pnpm eval --ask evals/ask-questions.json` (local URLs only).
+
+Metrics: tool calls made by Ask are ordinary rows with client `ask`; each
+turn adds one `ask.turn` row (see `STANDARD.md`). The public dashboard shows
+Ask counts, outcomes, topics and cost, never message text.
 
 ## Transferring to another Cloudflare account
 
