@@ -292,6 +292,24 @@ export async function handleAsk(
   const toolCtx: ToolContext = { env, auth: null, requestId: crypto.randomUUID(), log };
   const userText = body.text;
 
+  // Model and tool failures surface in the stream as `{ type: "error", errorText: "upstream" }`;
+  // the details stay in the logs.
+  const onStreamError = (err: unknown): string => {
+    log("ask.upstream_error", { message: err instanceof Error ? err.message : String(err) });
+    logger.refusal({
+      callerKey,
+      slug: config.slug,
+      status: "error",
+      code: "upstream",
+      country,
+      latencyMs: now() - t0,
+      toolCalls: 0,
+      costMicroUsd: 0,
+      tokensOut: 0,
+    });
+    return "upstream";
+  };
+
   const stream = createUIMessageStream({
     execute: ({ writer }) => {
       const tools = buildAskTools({
@@ -354,23 +372,9 @@ export async function handleAsk(
           );
         },
       });
-      writer.merge(toUIMessageStream({ stream: result.stream }));
+      writer.merge(toUIMessageStream({ stream: result.stream, onError: onStreamError }));
     },
-    onError: (err) => {
-      log("ask.upstream_error", { message: err instanceof Error ? err.message : String(err) });
-      logger.refusal({
-        callerKey,
-        slug: config.slug,
-        status: "error",
-        code: "upstream",
-        country,
-        latencyMs: now() - t0,
-        toolCalls: 0,
-        costMicroUsd: 0,
-        tokensOut: 0,
-      });
-      return "upstream";
-    },
+    onError: onStreamError,
   });
 
   const token = await issueSession(secret, body.id, now());
