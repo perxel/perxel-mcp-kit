@@ -9,14 +9,48 @@ export interface MetricRow {
   tool: string; // "unknown" when the tool name wasn't found
   status: MetricStatus;
   code: string; // error code or ""
-  client: "claude-ai" | "claude-code" | "inspector" | "other";
+  client: "claude-ai" | "claude-code" | "inspector" | "other" | "ask"; // "ask": tool calls made by the Ask chat
   access: "public" | "private";
   auth: "anon" | "user";
   country: string;
   era: "modern" | "legacy";
   latencyMs: number;
   count: number; // result count, -1 when not a list
-  bytes: number; // response bytes, -1 when unknown
+  bytes: number; // response bytes, -1 when unknown. For `ask.turn` rows: cost in micro-USD.
+}
+
+/**
+ * Ask writes one extra row per turn with `tool: "ask.turn"`, `client: "ask"`: `status`
+ * "ok" or "error" with the Ask error code in `code`. Doubles keep the tool-row layout:
+ * double1 latencyMs, double2 tool calls in the turn, double3 (the `bytes` slot) cost in
+ * micro-USD, plus double4 output tokens. Dashboard tool-call panels exclude these rows.
+ */
+export const ASK_TURN_TOOL = "ask.turn";
+
+export interface AskTurnRow {
+  callerKey: string;
+  slug: string;
+  status: "ok" | "error" | "rate_limited";
+  code: string;
+  country: string;
+  latencyMs: number;
+  toolCalls: number;
+  costMicroUsd: number;
+  tokensOut: number;
+}
+
+export function recordAskTurn(env: Env, row: AskTurnRow): void {
+  const analytics = env.METRICS;
+  if (!analytics) return;
+  try {
+    analytics.writeDataPoint({
+      indexes: [row.callerKey],
+      blobs: [row.slug, ASK_TURN_TOOL, row.status, row.code, "ask", "public", "anon", row.country, "modern", KIT_VERSION],
+      doubles: [row.latencyMs, row.toolCalls, row.costMicroUsd, row.tokensOut],
+    });
+  } catch {
+    // Never fail the answer over metrics.
+  }
 }
 
 /**
