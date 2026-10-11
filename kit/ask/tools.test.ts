@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { McpConfig } from "../core/config.js";
 import type { Env } from "../core/env.js";
 import { defineTool, ToolError, type ToolContext } from "../core/tool.js";
-import { buildAskTools, HANDOFF_TOOL, sourcesIn } from "./tools.js";
+import { actionRules } from "./prompt.js";
+import { buildAskTools, HANDOFF_TOOL, LEAD_TOOL, SUBSCRIBE_TOOL, sourcesIn, writtenIn } from "./tools.js";
 
 const seen: { locale?: string; auth?: unknown }[] = [];
 const search = defineTool({
@@ -119,5 +120,62 @@ describe("ask tools", () => {
       "https://1",
       "http://2",
     ]);
+  });
+});
+
+describe("ask action tools", () => {
+  function withActions(userText: string, actions: ("lead" | "subscribe")[] = ["lead", "subscribe"]) {
+    const runs: string[] = [];
+    const tools = buildAskTools({
+      config,
+      ctx: { env: {} as Env, auth: null, requestId: "r", log: () => {} },
+      locale: "en",
+      metrics: { callerKey: "", country: "" },
+      onTool: (r) => runs.push(r.name),
+      actions,
+      userText,
+    });
+    return { tools, runs };
+  }
+
+  it("are off unless switched on, one at a time", () => {
+    expect(Object.keys(setup().tools)).not.toContain(LEAD_TOOL);
+    expect(Object.keys(withActions("", ["subscribe"]).tools)).toEqual(["search_content", HANDOFF_TOOL, SUBSCRIBE_TOOL]);
+    expect(Object.keys(withActions("").tools)).toContain(LEAD_TOOL);
+  });
+
+  it("prepare_lead returns the fields written in the message and drops the rest", async () => {
+    const said = "Quote for this brief https://docs.example.com/b/ please, I'm An, call 090 123 4567";
+    const { tools, runs } = withActions(said);
+    const out = await tools[LEAD_TOOL].execute!(
+      { intent: "quote", message: " Quote for this brief ", contact: "0901234567", name: "An", briefUrl: "https://docs.example.com/b" },
+      opts,
+    );
+    expect(out).toEqual({ action: "lead", intent: "quote", message: "Quote for this brief", contact: "0901234567", name: "An", briefUrl: "https://docs.example.com/b" });
+    expect(runs).toEqual([LEAD_TOOL]);
+    const made = await tools[LEAD_TOOL].execute!({ intent: "contact", message: "m", contact: "x@y.com", name: "Bình", briefUrl: "ftp://docs.example.com/b" }, opts);
+    expect(made).toEqual({ action: "lead", intent: "contact", message: "m" });
+  });
+
+  it("prepare_subscribe keeps a valid email from the message only", async () => {
+    const { tools } = withActions("send me new posts at A@B.co");
+    expect(await tools[SUBSCRIBE_TOOL].execute!({ email: "a@b.co" }, opts)).toEqual({ action: "subscribe", email: "a@b.co" });
+    expect(await tools[SUBSCRIBE_TOOL].execute!({ email: "c@d.co" }, opts)).toEqual({ action: "subscribe" });
+    expect(await tools[SUBSCRIBE_TOOL].execute!({}, opts)).toEqual({ action: "subscribe" });
+  });
+
+  it("writtenIn matches phones by digits, the rest as text", () => {
+    expect(writtenIn("+84 90 123 4567", "số mình 84901234567 nhé")).toBe(true);
+    expect(writtenIn("1234", "1234")).toBe(false);
+    expect(writtenIn("https://x.test/a/", "see https://x.test/a")).toBe(true);
+    expect(writtenIn("", "anything")).toBe(false);
+  });
+
+  it("adds action rules to the prompt only for the switched-on actions", () => {
+    const base = { model: "m", systemPrompt: "", allowedOrigins: ["https://x.test"], handoff: [], topics: ["a"] };
+    expect(actionRules(base)).toBe("");
+    const rules = actionRules({ ...base, actions: ["subscribe"] });
+    expect(rules).toContain(SUBSCRIBE_TOOL);
+    expect(rules).not.toContain(LEAD_TOOL);
   });
 });

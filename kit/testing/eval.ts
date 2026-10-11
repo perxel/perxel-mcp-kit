@@ -90,6 +90,9 @@ async function callTool(url: string, tool: string, args: Record<string, unknown>
 /** Cloudflare's always-pass test token (test secret `1x0000000000000000000000000000000AA`). */
 export const TEST_TURNSTILE_TOKEN = "XXXX.DUMMY.TOKEN.XXXX";
 const HANDOFF_TOOL_NAME = "suggest_handoff";
+/** Action tools (`ask.actions`) by the action name a question expects. */
+const ACTION_TOOL_NAMES: Record<string, AskActionName> = { prepare_lead: "lead", prepare_subscribe: "subscribe" };
+type AskActionName = "lead" | "subscribe";
 const DEFAULT_ASK_URL = "http://localhost:8788/ask";
 const DEFAULT_ASK_ORIGIN = "http://localhost:3000";
 const ASK_USAGE =
@@ -104,6 +107,8 @@ export interface AskQuestion {
   mustLink: string[];
   mustNot: string[];
   expectHandoff: boolean;
+  /** The action tool the answer must call; when omitted, it must call none. */
+  expectAction?: AskActionName;
 }
 
 /** One `/ask` turn as seen by the scorer. */
@@ -111,8 +116,10 @@ export interface AskTurn {
   answer: string;
   links: string[];
   handoff: boolean;
-  /** Content tool calls (the handoff not counted). */
+  /** Content tool calls (the handoff and actions not counted). */
   tools?: number;
+  /** Action tools called, by action name. */
+  actions?: AskActionName[];
   error?: string;
 }
 
@@ -161,6 +168,10 @@ export function parseAskQuestions(text: string): AskQuestion[] {
     if (locale !== "vi" && locale !== "en") throw new Error(`${where}: "locale" must be "vi" or "en"`);
     const expectHandoff = q["expectHandoff"];
     if (typeof expectHandoff !== "boolean") throw new Error(`${where}: "expectHandoff" must be a boolean`);
+    const expectAction = q["expectAction"];
+    if (expectAction !== undefined && expectAction !== "lead" && expectAction !== "subscribe") {
+      throw new Error(`${where}: "expectAction" must be "lead" or "subscribe"`);
+    }
     return {
       id: fieldString(q, "id", where),
       locale,
@@ -169,6 +180,7 @@ export function parseAskQuestions(text: string): AskQuestion[] {
       mustLink: fieldStrings(q, "mustLink", where),
       mustNot: fieldStrings(q, "mustNot", where),
       expectHandoff,
+      ...(expectAction ? { expectAction } : {}),
     };
   });
 }
@@ -195,6 +207,7 @@ export function parseAskSse(text: string): AskTurn {
   const links: string[] = [];
   let handoff = false;
   let tools = 0;
+  const actions: AskActionName[] = [];
   let error: string | undefined;
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
@@ -216,10 +229,15 @@ export function parseAskSse(text: string): AskTurn {
       case "source-url":
         if (typeof part["url"] === "string" && !links.includes(part["url"])) links.push(part["url"]);
         break;
-      case "tool-input-available":
-        if (part["toolName"] === HANDOFF_TOOL_NAME) handoff = true;
-        else tools++;
+      case "tool-input-available": {
+        const name = String(part["toolName"]);
+        const action = ACTION_TOOL_NAMES[name];
+        if (name === HANDOFF_TOOL_NAME) handoff = true;
+        else if (action) {
+          if (!actions.includes(action)) actions.push(action);
+        } else tools++;
         break;
+      }
       case "tool-input-start":
         if (part["toolName"] === HANDOFF_TOOL_NAME) handoff = true;
         break;
@@ -230,14 +248,14 @@ export function parseAskSse(text: string): AskTurn {
         break;
     }
   }
-  return { answer: answer.join(""), links, handoff, tools, ...(error === undefined ? {} : { error }) };
+  return { answer: answer.join(""), links, handoff, tools, actions, ...(error === undefined ? {} : { error }) };
 }
 
 /**
  * Scores one turn against its question (case-insensitive; Vietnamese diacritics
  * compared as-is): every `mustMention` in the answer, every `mustLink` in the
  * links or as text in the answer, no `mustNot` in the answer, and
- * `handoff === expectHandoff`.
+ * `handoff === expectHandoff`, and exactly the expected action tool (or none).
  */
 export function scoreAskAnswer(question: AskQuestion, turn: AskTurn): AskScore {
   const failed: string[] = [];
@@ -256,6 +274,9 @@ export function scoreAskAnswer(question: AskQuestion, turn: AskTurn): AskScore {
   if (turn.handoff !== question.expectHandoff) {
     failed.push(`handoff=${turn.handoff} expected=${question.expectHandoff}`);
   }
+  const got = (turn.actions ?? []).join(",") || "none";
+  const want = question.expectAction ?? "none";
+  if (got !== want) failed.push(`action=${got} expected=${want}`);
   if (turn.error) failed.push(`stream error: ${turn.error}`);
   return { pass: failed.length === 0, failed };
 }

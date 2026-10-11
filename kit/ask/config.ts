@@ -13,6 +13,14 @@ export interface AskHandoffLink {
   locale?: AskLocale;
 }
 
+/**
+ * Actions the model may prepare for the visitor (never send): `lead` (be contacted or
+ * quoted) and `subscribe` (newsletter). The website shows a form and sends on the
+ * visitor's tap; the server only validates what the model found.
+ */
+export type AskAction = "lead" | "subscribe";
+export const ASK_ACTIONS: readonly AskAction[] = ["lead", "subscribe"];
+
 export interface AskLimits {
   /** User messages per conversation (default 20). */
   messagesPerConversation?: number;
@@ -48,6 +56,8 @@ export interface AskConfig {
   /** Hours a session token stays valid after the last answer (default 24). After that the
    * next turn needs a new Turnstile token; the conversation itself carries on. */
   sessionHours?: number;
+  /** Actions the model may prepare (`prepare_lead`, `prepare_subscribe`); none when omitted. */
+  actions?: AskAction[];
   limits?: AskLimits;
 }
 
@@ -110,6 +120,13 @@ export function validateAskConfig(ask: AskConfig): void {
   for (const h of ask.handoff ?? []) {
     if (!h.label || !h.href) throw new Error("ask.handoff entries need label and href");
     if (h.locale !== undefined && h.locale !== "vi" && h.locale !== "en") throw new Error(`ask.handoff: bad locale "${h.locale}"`);
+  }
+  if (ask.actions !== undefined) {
+    if (!Array.isArray(ask.actions)) throw new Error("ask.actions must be an array");
+    for (const a of ask.actions) {
+      if (!ASK_ACTIONS.includes(a)) throw new Error(`ask.actions: unknown action "${a}" (expected ${ASK_ACTIONS.join(", ")})`);
+    }
+    if (new Set(ask.actions).size !== ask.actions.length) throw new Error("ask.actions must be unique");
   }
   const positive = (name: string, v: number | undefined) => {
     if (v !== undefined && !(typeof v === "number" && Number.isFinite(v) && v > 0)) {

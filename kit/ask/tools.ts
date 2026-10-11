@@ -3,10 +3,16 @@ import { z } from "zod";
 import type { McpConfig } from "../core/config.js";
 import { recordToolCall } from "../core/metrics.js";
 import { ToolError, type ToolContext, type ToolDef } from "../core/tool.js";
-import type { AskLocale } from "./config.js";
+import type { AskAction, AskLocale } from "./config.js";
 
 /** The Ask-only tool the model calls to offer a handoff to a person. */
 export const HANDOFF_TOOL = "suggest_handoff";
+/** Action tools: they prepare a form for the visitor and send nothing (`ask.actions`). */
+export const LEAD_TOOL = "prepare_lead";
+export const SUBSCRIBE_TOOL = "prepare_subscribe";
+export const ACTION_TOOLS: Record<AskAction, string> = { lead: LEAD_TOOL, subscribe: SUBSCRIBE_TOOL };
+/** Ask-only tools that are not content lookups (left out of the turn's tool count). */
+export const UI_TOOLS: readonly string[] = [HANDOFF_TOOL, LEAD_TOOL, SUBSCRIBE_TOOL];
 
 export const MAX_SOURCES = 4;
 /** Sources taken from one tool result: the top hits, not a whole search list. */
@@ -32,7 +38,41 @@ export interface AskToolsOptions {
   onSource?: (source: AskSource) => void;
   /** Called after every tool run, the handoff included. */
   onTool?: (run: AskToolRun) => void;
+  /** Action tools to offer (`ask.actions`); none when omitted. */
+  actions?: readonly AskAction[];
+  /** The visitor's current message, raw: action fields not written in it are dropped. */
+  userText?: string;
 }
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Whether `value` is written in the visitor's message: an email or link as text
+ * (case-insensitive), a phone number by its digits (8 or more), anything else as text.
+ * Guards the action tools against fields the model made up or took from elsewhere.
+ */
+export function writtenIn(value: string, message: string): boolean {
+  const v = value.trim().toLowerCase().replace(/\/+$/, "");
+  if (!v) return false;
+  const m = message.toLowerCase();
+  if (!v.includes("@") && /^[+\d\s().-]+$/.test(v)) {
+    const digits = v.replace(/\D/g, "");
+    return digits.length >= 8 && m.replace(/\D/g, "").includes(digits);
+  }
+  return m.includes(v);
+}
+
+const LeadInput = z.object({
+  intent: z.enum(["contact", "quote", "other"]).describe("contact: wants to be contacted; quote: wants a price or a proposal; other: anything else."),
+  message: z.string().max(500).describe("What the visitor wants, in one or two sentences, in their language."),
+  contact: z.string().max(200).optional().describe("Phone or email exactly as the visitor wrote it in this message."),
+  name: z.string().max(100).optional().describe("The visitor's own name, only if they wrote it."),
+  briefUrl: z.string().max(500).optional().describe("A link to their brief, exactly as written (http or https)."),
+});
+
+const SubscribeInput = z.object({
+  email: z.string().max(200).optional().describe("The visitor's email exactly as they wrote it in this message."),
+});
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -80,7 +120,8 @@ export function askToolDefs(config: McpConfig): ToolDef[] {
  * hidden from the model and set to the visitor's locale.
  */
 export function buildAskTools(opts: AskToolsOptions): ToolSet {
-  const { config, ctx, locale, metrics, onSource, onTool } = opts;
+  const { config, ctx, locale, metrics, onSource, onTool, actions = [] } = opts;
+  const said = opts.userText ?? "";
   const sourceUrls = new Set<string>();
   const anonCtx: ToolContext = { ...ctx, auth: null };
   const tools: ToolSet = {};
@@ -152,6 +193,42 @@ export function buildAskTools(opts: AskToolsOptions): ToolSet {
       return { shown: true };
     },
   });
+
+  if (actions.includes("lead")) {
+    tools[LEAD_TOOL] = tool({
+      description:
+        "Prepare a contact request for the visitor to check and send: call only when the visitor asks to be contacted or " +
+        "quoted. Sends nothing; the interface shows a form with these details. Fill only what the visitor wrote.",
+      inputSchema: LeadInput,
+      execute: async (input) => {
+        onTool?.({ name: LEAD_TOOL });
+        const keep = (v: string | undefined) => (v && writtenIn(v, said) ? v.trim() : undefined);
+        const briefUrl = keep(input.briefUrl);
+        return {
+          action: "lead" as const,
+          intent: input.intent,
+          message: input.message.trim(),
+          ...(keep(input.contact) ? { contact: keep(input.contact) } : {}),
+          ...(keep(input.name) ? { name: keep(input.name) } : {}),
+          ...(briefUrl && /^https?:\/\//i.test(briefUrl) ? { briefUrl } : {}),
+        };
+      },
+    });
+  }
+
+  if (actions.includes("subscribe")) {
+    tools[SUBSCRIBE_TOOL] = tool({
+      description:
+        "Prepare a newsletter signup for the visitor to check and send: call only when the visitor asks for updates, " +
+        "new posts by email or the newsletter. Sends nothing; the interface shows a form.",
+      inputSchema: SubscribeInput,
+      execute: async (input) => {
+        onTool?.({ name: SUBSCRIBE_TOOL });
+        const email = input.email?.trim();
+        return { action: "subscribe" as const, ...(email && EMAIL_RE.test(email) && writtenIn(email, said) ? { email } : {}) };
+      },
+    });
+  }
 
   return tools;
 }

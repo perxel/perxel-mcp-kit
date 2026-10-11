@@ -393,6 +393,7 @@ ask: {
   topics: ["pricing", "process"],              // + "other"
   retentionDays: 90,                           // conversation text deleted after this
   sessionHours: 24,                            // x-ask-session life after the last answer; then Turnstile again, same conversation
+  actions: ["lead", "subscribe"],              // optional: prepare_lead / prepare_subscribe (below)
   limits: { messagesPerConversation: 20, maxInputChars: 1000, maxOutputTokens: 700, maxToolSteps: 4, perIpPerMinute: 6, dailyBudgetUsd: 3 },
 }
 ```
@@ -403,6 +404,19 @@ ask: {
 | `POST /ask/summary` | `{ id }` + session: a 1 to 3 sentence summary of what the visitor wants, for a lead form. Once per 5 minutes per conversation. |
 | `POST /ask/lead` | `{ id }` + session: marks the conversation as having sent a lead. |
 | `GET /dash/conversations` | Review page (stripped text, tools, cited pages; keep a question, delete a conversation). **Always behind Access**, even with `DASH_PUBLIC=true`. |
+
+**Actions** (optional, `actions`). `prepare_lead {intent: contact | quote | other,
+message, contact?, name?, briefUrl?}` and `prepare_subscribe {email?}` let the
+model prepare a contact request or a newsletter signup when the visitor asks
+for one. They send nothing: the tool part's output carries the fields and the
+website shows a form the visitor checks and sends through its own form handler.
+A field the visitor did not write in the current message (phone by its digits,
+the rest as text) is dropped from the output, and a `briefUrl` must be
+http(s). The prompt tells the model never to offer them on its own
+(`actionRules` in `kit/ask/prompt.ts`). Since the stored history is redacted,
+details from earlier messages are the website's job (it has the raw
+conversation). Evals: `"expectAction": "lead" | "subscribe"` on a question; a
+question without it fails if any action is called.
 
 Checks are judged in this order: origin → body → session or Turnstile →
 per-IP limit (`ASK_RATE_LIMITER`) → conversation cap (D1) → daily budget (D1

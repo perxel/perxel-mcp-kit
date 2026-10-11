@@ -106,6 +106,7 @@ describe("parseAskSse", () => {
       links: ["https://perxel.com/services/wordpress-custom-theme"],
       handoff: true,
       tools: 0,
+      actions: [],
     });
   });
 
@@ -120,7 +121,7 @@ describe("parseAskSse", () => {
       ),
     );
     // Only `tool-input-available` counts: a tool's `tool-input-start` precedes it.
-    expect(turn).toEqual({ answer: "20.000.000đ", links: ["https://perxel.com/pricing"], handoff: false, tools: 1 });
+    expect(turn).toEqual({ answer: "20.000.000đ", links: ["https://perxel.com/pricing"], handoff: false, tools: 1, actions: [] });
   });
 
   it("records an error chunk and skips junk lines", () => {
@@ -129,14 +130,27 @@ describe("parseAskSse", () => {
       links: [],
       handoff: false,
       tools: 0,
+      actions: [],
     });
     expect(parseAskSse(sse({ type: "error", errorText: "upstream" }))).toEqual({
       answer: "",
       links: [],
       handoff: false,
       tools: 0,
+      actions: [],
       error: "upstream",
     });
+  });
+
+  it("records action tools apart from content tools", () => {
+    const turn = parseAskSse(
+      sse(
+        { type: "tool-input-available", toolCallId: "c1", toolName: "prepare_lead", input: {} },
+        { type: "tool-input-available", toolCallId: "c2", toolName: "search_content", input: {} },
+      ),
+    );
+    expect(turn.actions).toEqual(["lead"]);
+    expect(turn.tools).toBe(1);
   });
 
   it("parses a real-shaped stream with one delta per line", () => {
@@ -205,6 +219,12 @@ describe("scoreAskAnswer", () => {
     expect(score.failed).toEqual(['found mustNot "flutter"', "handoff=true expected=false"]);
     const noHandoff = scoreAskAnswer(askQuestion({ expectHandoff: true }), turn());
     expect(noHandoff.failed).toEqual(["handoff=false expected=true"]);
+  });
+
+  it("requires exactly the expected action, or none", () => {
+    expect(scoreAskAnswer(askQuestion({ expectAction: "lead" }), turn({ actions: ["lead"] })).pass).toBe(true);
+    expect(scoreAskAnswer(askQuestion({ expectAction: "lead" }), turn()).failed).toEqual(["action=none expected=lead"]);
+    expect(scoreAskAnswer(askQuestion({}), turn({ actions: ["subscribe"] })).failed).toEqual(["action=subscribe expected=none"]);
   });
 
   it("fails on a stream error even when the text matches", () => {

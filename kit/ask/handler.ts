@@ -23,7 +23,7 @@ import { askInstructions, summaryInstructions } from "./prompt.js";
 import { redact } from "./redact.js";
 import { issueSession, verifySession } from "./session.js";
 import { addCost, getConversation, getMessages, loadTurnState, markLeadSent, todayCostUsd } from "./store.js";
-import { buildAskTools, HANDOFF_TOOL, type AskToolRun } from "./tools.js";
+import { buildAskTools, HANDOFF_TOOL, UI_TOOLS, type AskToolRun } from "./tools.js";
 import { verifyTurnstile } from "./turnstile.js";
 
 /**
@@ -367,6 +367,8 @@ export async function handleAsk(
           writer.write({ type: "source-url", sourceId: s.url, url: s.url, title: s.title });
         },
         onTool: (r) => runs.push(r),
+        actions: ask.actions,
+        userText,
       });
       const result = streamText({
         model,
@@ -384,7 +386,7 @@ export async function handleAsk(
           const timing = stepTiming(event.steps as readonly StepPerf[]);
           const latencyMs = now() - t0;
           noteSpend(costUsd);
-          const toolCalls = runs.filter((r) => r.name !== HANDOFF_TOOL).length;
+          const toolCalls = runs.filter((r) => !UI_TOOLS.includes(r.name)).length;
           const handoff = runs.some((r) => r.name === HANDOFF_TOOL);
           const tokensIn = event.totalUsage.inputTokens ?? 0;
           const tokensOut = event.totalUsage.outputTokens ?? 0;

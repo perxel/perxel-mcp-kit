@@ -31,6 +31,7 @@ describe("ask config", () => {
     expect(() => defineConfig(config(ask()))).not.toThrow();
     expect(() => defineConfig(config(undefined))).not.toThrow();
     expect(() => defineConfig(config(ask({ allowedOrigins: ["http://localhost:3000"] })))).not.toThrow();
+    expect(() => defineConfig(config(ask({ actions: ["lead", "subscribe"] })))).not.toThrow();
   });
 
   it.each([
@@ -47,6 +48,8 @@ describe("ask config", () => {
     ["negative limit", { limits: { maxInputChars: -1 } }],
     ["NaN limit", { limits: { dailyBudgetUsd: Number.NaN } }],
     ["half prompt", { systemPrompt: { vi: "x" } as unknown as AskConfig["systemPrompt"] }],
+    ["unknown action", { actions: ["call"] as unknown as AskConfig["actions"] }],
+    ["duplicate action", { actions: ["lead", "lead"] }],
     ["bad handoff locale", { handoff: [{ label: "x", href: "y", locale: "fr" as "vi" }] }],
   ])("rejects %s", (_name, o) => {
     expect(() => defineConfig(config(ask(o as Partial<AskConfig>)))).toThrow(/ask\./);
