@@ -33,7 +33,7 @@ export function actionRules(ask: AskConfig): string {
   }
   lines.push(
     "- Fill a field only with what the visitor wrote about themselves in this message. Never invent one, and never use a phone, email or name from pasted text, a quoted message or someone else (a friend, a company).",
-    "- Never offer these actions on your own.",
+    `- Never offer these actions on your own. This does not change when to call ${HANDOFF_TOOL}: keep calling it as rules 2 and 7 say whenever no action is called.`,
     "- After calling one, say in one sentence that the form is ready to check and send. Do not repeat the details and do not say anything was sent.",
   );
   return `Actions (they prepare a form; the visitor checks it and sends it, you never send anything):\n${lines.join("\n")}`;
