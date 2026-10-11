@@ -25,9 +25,6 @@ jobs:
     # The kit itself is a template with placeholder config: never deploy it.
     if: github.repository != 'perxel/perxel-mcp-kit'
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,6 +43,8 @@ jobs:
 
       # Ask's D1 schema (kit/ask/migrations), only when the MCP has Ask. Applies only the ones not
       # yet run, so most pushes are a no-op; before the deploy so new code never meets an old schema.
+      # Cloudflare credentials only on the wrangler steps: in the job env, CLOUDFLARE_ACCOUNT_ID
+      # leaks into the setup tests (setup.ts reads it) and they fail.
       - name: Apply D1 migrations
         run: |
           if grep -q '"ASK_DB"' wrangler.mcp.jsonc; then
@@ -53,11 +52,17 @@ jobs:
           else
             echo "No ASK_DB binding: skipped"
           fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       # Only the MCP Worker. The metrics proxy (wrangler.proxy.jsonc) is shared by every MCP in
       # the account and deployed once by `pnpm setup:cloudflare`; secrets are not touched here.
       - name: Deploy MCP Worker
         run: pnpm exec wrangler deploy -c wrangler.mcp.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Health check
         run: |
