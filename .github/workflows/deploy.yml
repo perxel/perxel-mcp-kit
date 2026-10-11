@@ -1,0 +1,70 @@
+name: Deploy
+
+# Deploys the MCP Worker on every push to main. Comes with "Use this template"; `kit:update` never
+# touches it (it replaces kit/ only), so a clone copies a newer version by hand.
+# Needs two repo secrets: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (README "Deploy on push").
+
+on:
+  push:
+    branches: [main]
+    # Pushes that only touch these paths don't change the deployed Worker.
+    paths-ignore:
+      - ".claude/**"
+      - ".idea/**"
+      - "**/*.md"
+      - "evals/**"
+  workflow_dispatch:
+
+# One deploy at a time; a newer push waits instead of racing the older one.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # The kit itself is a template with placeholder config: never deploy it.
+    if: github.repository != 'perxel/perxel-mcp-kit'
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version comes from "packageManager" in package.json.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+      - run: pnpm test
+
+      # Ask's D1 schema (kit/ask/migrations), only when the MCP has Ask. Applies only the ones not
+      # yet run, so most pushes are a no-op; before the deploy so new code never meets an old schema.
+      - name: Apply D1 migrations
+        run: |
+          if grep -q '"ASK_DB"' wrangler.mcp.jsonc; then
+            pnpm exec wrangler d1 migrations apply ASK_DB --remote -c wrangler.mcp.jsonc
+          else
+            echo "No ASK_DB binding: skipped"
+          fi
+
+      # Only the MCP Worker. The metrics proxy (wrangler.proxy.jsonc) is shared by every MCP in
+      # the account and deployed once by `pnpm setup:cloudflare`; secrets are not touched here.
+      - name: Deploy MCP Worker
+        run: pnpm exec wrangler deploy -c wrangler.mcp.jsonc
+
+      - name: Health check
+        run: |
+          url=$(grep -oE '"MCP_PUBLIC_URL"[[:space:]]*:[[:space:]]*"[^"]+"' wrangler.mcp.jsonc | cut -d'"' -f4)
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "$url/health"; then echo; exit 0; fi
+            sleep 5
+          done
+          echo "$url/health did not answer 200" >&2
+          exit 1

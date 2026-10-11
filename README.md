@@ -273,6 +273,34 @@ Access app and re-run.
 The global key is all-powerful: keep it in `.dev.vars` only, never commit it,
 and rotate it if it leaks. The Worker never reads it.
 
+### Deploy on push (GitHub Actions)
+
+After the first `pnpm setup:cloudflare`, every push to `main` deploys through
+`.github/workflows/deploy.yml` (it comes with "Use this template"; it does not
+run in the kit repo itself). It runs `pnpm typecheck` and `pnpm test`, applies
+the Ask D1 migrations when the config has `ASK_DB`, deploys the MCP Worker
+only, then waits for `<MCP_PUBLIC_URL>/health`. It never touches secrets or
+the metrics proxy; those stay with `setup:cloudflare`. Pushes that only change
+`.claude/`, `.idea/`, `*.md` or `evals/` don't deploy.
+
+It needs two repo secrets:
+
+- `CLOUDFLARE_ACCOUNT_ID`: the account id (`CF_ACCOUNT_ID` in
+  `wrangler.proxy.jsonc`).
+- `CLOUDFLARE_API_TOKEN`: a scoped API token, never the Global API Key.
+  Account: *Workers Scripts Edit*, *Workers KV Storage Edit*, *D1 Edit*,
+  *Account Settings Read*; for a custom domain also, on its zone: *Workers
+  Routes Edit*, *DNS Edit*, *Zone Read*. One token can serve every MCP in the
+  account.
+
+```
+gh secret set CLOUDFLARE_ACCOUNT_ID -R <owner>/<repo>
+gh secret set CLOUDFLARE_API_TOKEN -R <owner>/<repo>
+```
+
+`kit:update` replaces `kit/` only, so clones made before a change to this
+workflow copy the new file by hand.
+
 ### Manual steps (what the script automates)
 
 Only needed to understand or repair a setup by hand. Run `pnpm exec wrangler
