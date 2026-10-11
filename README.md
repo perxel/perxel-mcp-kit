@@ -429,6 +429,13 @@ Metrics: tool calls made by Ask are ordinary rows with client `ask`; each
 turn adds one `ask.turn` row (see `STANDARD.md`). The public dashboard shows
 Ask counts, outcomes, topics and cost, never message text.
 
+Latency: each answered turn records the time to the first answer text (what
+the visitor feels), the full answer, the checks before the model, the model
+wait and tool time (from the AI SDK's per-step `performance`), and the number
+of model steps. The dashboard's "Ask latency" card shows their p50/p95 and a
+trend; every turn also logs `ask.timing` with a per-step breakdown (`wrangler
+tail` or Workers Logs) for looking at one slow answer.
+
 ## Transferring to another Cloudflare account
 
 See `TRANSFER.md`.

@@ -22,8 +22,11 @@ export interface MetricRow {
 /**
  * Ask writes one extra row per turn with `tool: "ask.turn"`, `client: "ask"`: `status`
  * "ok" or "error" with the Ask error code in `code`. Doubles keep the tool-row layout:
- * double1 latencyMs, double2 tool calls in the turn, double3 (the `bytes` slot) cost in
- * micro-USD, plus double4 output tokens. Dashboard tool-call panels exclude these rows.
+ * double1 latencyMs (request to last token), double2 tool calls in the turn, double3 (the
+ * `bytes` slot) cost in micro-USD, plus double4 output tokens, double5 ms to the first
+ * answer text (-1: none), double6 ms of checks before the model call, double7 model steps
+ * (0 on refusals and on rows written before these fields), double8 ms waiting on the model,
+ * double9 ms in tools. Dashboard tool-call panels exclude these rows.
  */
 export const ASK_TURN_TOOL = "ask.turn";
 
@@ -37,6 +40,16 @@ export interface AskTurnRow {
   toolCalls: number;
   costMicroUsd: number;
   tokensOut: number;
+  /** Request start to the first answer text, -1 when no text was sent. */
+  firstTextMs?: number;
+  /** Request start to the model call: every check and read before it. */
+  preModelMs?: number;
+  /** Model calls in the turn (each tool round is one more). */
+  modelSteps?: number;
+  /** Time waiting on the model, all steps. */
+  modelMs?: number;
+  /** Time running tools, all steps. */
+  toolMs?: number;
 }
 
 export function recordAskTurn(env: Env, row: AskTurnRow): void {
@@ -46,7 +59,17 @@ export function recordAskTurn(env: Env, row: AskTurnRow): void {
     analytics.writeDataPoint({
       indexes: [row.callerKey],
       blobs: [row.slug, ASK_TURN_TOOL, row.status, row.code, "ask", "public", "anon", row.country, "modern", KIT_VERSION],
-      doubles: [row.latencyMs, row.toolCalls, row.costMicroUsd, row.tokensOut],
+      doubles: [
+        row.latencyMs,
+        row.toolCalls,
+        row.costMicroUsd,
+        row.tokensOut,
+        row.firstTextMs ?? -1,
+        row.preModelMs ?? -1,
+        row.modelSteps ?? 0,
+        row.modelMs ?? -1,
+        row.toolMs ?? -1,
+      ],
     });
   } catch {
     // Never fail the answer over metrics.

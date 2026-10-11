@@ -158,6 +158,17 @@ describe("askDashQueries", () => {
     expect(queries.askCost).toMatch(/FORMAT JSON$/);
   });
 
+  it("Ask latency queries read only answered, timed turns", () => {
+    const queries = askDashQueries("mcp_my_demo", "7d");
+    for (const sql of [queries.askLatency, queries.askLatencyTotals]) {
+      expect(sql).toContain("blob2 = 'ask.turn' AND blob3 = 'ok' AND double7 > 0 AND double5 > 0");
+      expect(sql).toContain("quantileExactWeighted(0.5)(double5, _sample_interval)");
+      expect(sql).toMatch(/FORMAT JSON$/);
+    }
+    expect(queries.askLatency).toContain("GROUP BY t");
+    expect(queries.askLatencyTotals).toContain("AS steps_avg");
+  });
+
   it("uses the correct range interval", () => {
     const queries = askDashQueries("mcp_my_demo", "24h");
     expect(queries.askTimeline).toContain("INTERVAL '24' HOUR");

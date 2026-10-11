@@ -99,11 +99,17 @@ export function dashQueries(dataset: string, range: DashRange): Record<PanelId, 
 export interface AskDashQueries {
   askTimeline: string;
   askCost: string;
+  askLatency: string;
+  askLatencyTotals: string;
 }
+
+/** `ask.turn` rows that answered with text and carry the timing fields (double7 > 0). */
+const ASK_TIMED = " AND blob2 = 'ask.turn' AND blob3 = 'ok' AND double7 > 0 AND double5 > 0";
 
 /** Ask-specific Analytics Engine queries. Returns empty object when ask is not configured. */
 export function askDashQueries(dataset: string, range: DashRange): AskDashQueries {
   const r = DASH_RANGES[range];
+  const q = (level: number, col: string) => `quantileExactWeighted(${level})(${col}, _sample_interval)`;
   const since = `timestamp > now() - INTERVAL '${r.hours}' HOUR`;
   const bucket = `toStartOfInterval(timestamp, INTERVAL '${r.bucketHours}' HOUR)`;
   const calls = "sum(_sample_interval) AS calls";
@@ -114,6 +120,15 @@ export function askDashQueries(dataset: string, range: DashRange): AskDashQuerie
     askCost:
       `SELECT ${bucket} AS t, sum(double3 * _sample_interval) / 1000000 AS usd FROM ${dataset} WHERE ${since} AND blob2 = 'ask.turn' AND blob3 = 'ok' ` +
       `GROUP BY t ORDER BY t FORMAT JSON`,
+    askLatency:
+      `SELECT ${bucket} AS t, ${q(0.5, "double5")} AS first_p50, ${q(0.95, "double5")} AS first_p95, ${q(0.5, "double1")} AS full_p50 ` +
+      `FROM ${dataset} WHERE ${since}${ASK_TIMED} GROUP BY t ORDER BY t FORMAT JSON`,
+    askLatencyTotals:
+      `SELECT ${calls}, ${q(0.5, "double5")} AS first_p50, ${q(0.95, "double5")} AS first_p95, ` +
+      `${q(0.5, "double1")} AS full_p50, ${q(0.95, "double1")} AS full_p95, ${q(0.5, "double6")} AS pre_p50, ` +
+      `${q(0.5, "double8")} AS model_p50, ${q(0.5, "double9")} AS tool_p50, ` +
+      `sum(double7 * _sample_interval) / sum(_sample_interval) AS steps_avg ` +
+      `FROM ${dataset} WHERE ${since}${ASK_TIMED} FORMAT JSON`,
   };
 }
 
@@ -314,7 +329,7 @@ export interface DashPageInput {
   /** Why data is missing entirely (no binding/key), or null. */
   notice: string | null;
   panels: Partial<Record<PanelId, PanelResult>>;
-  askPanels?: { askTimeline?: PanelResult; askCost?: PanelResult };
+  askPanels?: Partial<Record<keyof AskDashQueries, PanelResult>>;
   askTopicCounts?: { topic: string; n: number }[];
   askOutcomeCounts?: { answered: number; handedOff: number; leads: number };
 }
@@ -428,6 +443,34 @@ export function renderDashPage(input: DashPageInput): string {
       if (b !== null && v !== null) askCostByBucket.set(b, v);
     }
 
+    const firstP50 = new Map<number, number>();
+    const firstP95 = new Map<number, number>();
+    const fullP50 = new Map<number, number>();
+    for (const row of rowsOf(askPanels?.askLatency ?? { rows: [] })) {
+      const b = bucketMs(row["t"]);
+      if (b === null) continue;
+      for (const [m, k] of [[firstP50, "first_p50"], [firstP95, "first_p95"], [fullP50, "full_p50"]] as const) {
+        const v = num(row[k]);
+        if (v !== null) m.set(b, v);
+      }
+    }
+    const lt = rowsOf(askPanels?.askLatencyTotals ?? { rows: [] })[0] ?? {};
+    const timed = num(lt["calls"]);
+    const ms = (k: string) => fmtMs(timed ? num(lt[k]) : null);
+    const steps = timed ? num(lt["steps_avg"]) : null;
+    const askTiles = [
+      ["First text p50", ms("first_p50")],
+      ["First text p95", ms("first_p95")],
+      ["Full answer p50", ms("full_p50")],
+      ["Full answer p95", ms("full_p95")],
+      ["Checks p50", ms("pre_p50")],
+      ["Model p50", ms("model_p50")],
+      ["Tools p50", ms("tool_p50")],
+      ["Model steps (avg)", steps === null ? "–" : steps.toFixed(1)],
+    ]
+      .map(([k, v]) => `<div class="tile"><div class="k">${k}</div><div class="v">${escapeHtml(v)}</div></div>`)
+      .join("");
+
     const askTurnsSeries = [{ name: "Ask turns", cls: "ask-turns", values: askTurnsByBucket }];
     const askCostSeries = [{ name: "Cost (USD)", cls: "ask-cost", values: askCostByBucket }];
 
@@ -444,6 +487,17 @@ export function renderDashPage(input: DashPageInput): string {
     askSection = `
 <div class="card"><h2>Ask turns per bucket</h2>${panelError(askPanels?.askTimeline ?? { rows: [] })}${lineChart(buckets, askTurnsSeries, r.bucketHours)}</div>
 <div class="card"><h2>Ask cost trend (USD)</h2>${panelError(askPanels?.askCost ?? { rows: [] })}${lineChart(buckets, askCostSeries, r.bucketHours)}</div>
+<div class="card"><h2>Ask latency (ms, answered turns)</h2>${panelError(askPanels?.askLatencyTotals ?? { rows: [] })}<section class="tiles">${askTiles}</section>${panelError(
+      askPanels?.askLatency ?? { rows: [] },
+    )}${lineChart(
+      buckets,
+      [
+        { name: "First text p50", cls: "p50", values: firstP50 },
+        { name: "First text p95", cls: "p95", values: firstP95 },
+        { name: "Full answer p50", cls: "ask-full", values: fullP50 },
+      ],
+      r.bucketHours,
+    )}<div class="legend"><span><i class="l-p50"></i>First text p50</span><span><i class="l-p95"></i>First text p95</span><span><i class="l-ask-full"></i>Full answer p50</span></div></div>
 <div class="grid2">
   <div class="card"><h2>Outcomes</h2>${barList(outcomeRows, "No conversations in this range.")}</div>
   <div class="card"><h2>Top topics</h2>${barList(topicRows, "No topics in this range.")}</div>
@@ -459,7 +513,7 @@ export function renderDashPage(input: DashPageInput): string {
 <title>${escapeHtml(config.name)} · Dashboard</title>
 <style>
   :root { color-scheme: light dark; --fg: #111; --muted: #666; --line: rgba(127,127,127,0.22); --card: rgba(127,127,127,0.07);
-    --ok: #8a8f98; --invalid: #d4a017; --error: #d64545; --unauth: #4a7fd6; --forbidden: #7a5cd6; --limited: #c2410c; --other: #999; --p50: #4a7fd6; --p95: #d64545; --ask-turns: #4a7fd6; --ask-cost: #d64545; }
+    --ok: #8a8f98; --invalid: #d4a017; --error: #d64545; --unauth: #4a7fd6; --forbidden: #7a5cd6; --limited: #c2410c; --other: #999; --p50: #4a7fd6; --p95: #d64545; --ask-turns: #4a7fd6; --ask-cost: #d64545; --ask-full: #8a8f98; }
   @media (prefers-color-scheme: dark) { :root { --fg: #eee; --muted: #999; } }
   * { box-sizing: border-box; }
   body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); max-width: 1040px; margin: 32px auto; padding: 0 16px; }
@@ -483,10 +537,10 @@ export function renderDashPage(input: DashPageInput): string {
   .s-error { fill: var(--error); background: var(--error); } .s-unauthorized { fill: var(--unauth); background: var(--unauth); }
   .s-forbidden { fill: var(--forbidden); background: var(--forbidden); } .s-rate_limited { fill: var(--limited); background: var(--limited); }
   .s-other { fill: var(--other); background: var(--other); }
-  .l-p50 { stroke: var(--p50); } .l-p95 { stroke: var(--p95); } .l-ask-turns { stroke: var(--ask-turns); } .l-ask-cost { stroke: var(--ask-cost); }
+  .l-p50 { stroke: var(--p50); } .l-p95 { stroke: var(--p95); } .l-ask-turns { stroke: var(--ask-turns); } .l-ask-cost { stroke: var(--ask-cost); } .l-ask-full { stroke: var(--ask-full); }
   .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-  .legend i.l-p50 { background: var(--p50); } .legend i.l-p95 { background: var(--p95); }
+  .legend i.l-p50 { background: var(--p50); } .legend i.l-p95 { background: var(--p95); } .legend i.l-ask-full { background: var(--ask-full); }
   table { border-collapse: collapse; width: 100%; }
   th, td { padding: 6px 8px; border-top: 1px solid var(--line); text-align: left; white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; border-top: 0; }
@@ -656,7 +710,7 @@ export async function handleDash(
 
   let notice: string | null = null;
   const panels: Partial<Record<PanelId, PanelResult>> = {};
-  let askPanels: { askTimeline?: PanelResult; askCost?: PanelResult } = {};
+  let askPanels: Partial<Record<keyof AskDashQueries, PanelResult>> = {};
   let askTopicCounts: { topic: string; n: number }[] = [];
   let askOutcomeCounts: { answered: number; handedOff: number; leads: number } = { answered: 0, handedOff: 0, leads: 0 };
 
@@ -672,10 +726,9 @@ export async function handleDash(
 
     if (config.ask) {
       const askQueries = askDashQueries(datasetFor(config.slug), range);
-      const askResults = await Promise.all(
-        Object.entries(askQueries).map(([id, sql]) => runQuery(env, sql, log)),
-      );
-      askPanels = { askTimeline: askResults[0], askCost: askResults[1] };
+      const askIds = Object.keys(askQueries) as (keyof AskDashQueries)[];
+      const askResults = await Promise.all(askIds.map((id) => runQuery(env, askQueries[id], log)));
+      askIds.forEach((id, i) => (askPanels[id] = askResults[i]));
 
     }
   }

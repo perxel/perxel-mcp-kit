@@ -79,7 +79,7 @@ One `writeDataPoint` per `tools/call` (not per `tools/list`), written in `ctx.wa
 
 Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `tools/call` also produce a row.
 
-Ask adds one row per turn with `blobs[1]` = `ask.turn`, `blobs[4]` = `ask`, status `ok` / `error` / `rate_limited` and the Ask error code in `blobs[3]`; `doubles[1]` = tool calls in the turn, `doubles[2]` = cost in micro-USD (this slot is bytes on tool rows), `doubles[3]` = output tokens. Dashboard tool-call panels exclude `ask.turn` rows.
+Ask adds one row per turn with `blobs[1]` = `ask.turn`, `blobs[4]` = `ask`, status `ok` / `error` / `rate_limited` and the Ask error code in `blobs[3]`; `doubles[1]` = tool calls in the turn, `doubles[2]` = cost in micro-USD (this slot is bytes on tool rows), `doubles[3]` = output tokens, `doubles[4]` = ms from the request to the first answer text (`-1`: none), `doubles[5]` = ms of checks before the model call, `doubles[6]` = model steps (`0` on refusals and on rows written before these fields existed), `doubles[7]` = ms waiting on the model, `doubles[8]` = ms in tools; `doubles[0]` is the request to the last token. Dashboard tool-call panels exclude `ask.turn` rows.
 
 - Analytics Engine: one dataset per MCP (`mcp_<slug>`, `-` → `_`), 3-month retention.
 - Static JSON sources additionally keep a last-good copy in KV, written only when content changes.

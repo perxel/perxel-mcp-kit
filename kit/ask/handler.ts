@@ -178,6 +178,39 @@ function stepCost(steps: readonly { providerMetadata?: unknown }[]): number {
   return usd;
 }
 
+interface StepPerf {
+  performance?: { stepTimeMs?: number; timeToFirstOutputMs?: number; toolExecutionMs?: Readonly<Record<string, number>> };
+  toolCalls?: readonly { toolName: string }[];
+}
+
+export interface AskTiming {
+  modelMs: number;
+  toolMs: number;
+  /** One entry per model step, for the `ask.timing` log line. */
+  steps: { ms: number; firstOutputMs: number | null; toolMs: number; tools: string[] }[];
+}
+
+/** Per-step timing from the AI SDK's `performance` on each step: model wait vs tool time. */
+export function stepTiming(steps: readonly StepPerf[]): AskTiming {
+  let modelMs = 0;
+  let toolMs = 0;
+  const out: AskTiming["steps"] = [];
+  for (const s of steps) {
+    const p = s.performance ?? {};
+    const ms = Math.round(p.stepTimeMs ?? 0);
+    const tools = Math.round(Object.values(p.toolExecutionMs ?? {}).reduce((a, b) => a + b, 0));
+    modelMs += Math.max(0, ms - tools);
+    toolMs += tools;
+    out.push({
+      ms,
+      firstOutputMs: typeof p.timeToFirstOutputMs === "number" ? Math.round(p.timeToFirstOutputMs) : null,
+      toolMs: tools,
+      tools: (s.toolCalls ?? []).map((c) => c.toolName),
+    });
+  }
+  return { modelMs, toolMs, steps: out };
+}
+
 /** Handles every Ask path. Returns null when `path` is not an Ask path. */
 export async function handleAsk(
   request: Request,
@@ -291,6 +324,8 @@ export async function handleAsk(
   const cited: string[] = [];
   const toolCtx: ToolContext = { env, auth: null, requestId: crypto.randomUUID(), log };
   const userText = body.text;
+  const preModelMs = now() - t0;
+  let firstTextMs = -1;
 
   // Model and tool failures surface in the stream as `{ type: "error", errorText: "upstream" }`;
   // the details stay in the logs.
@@ -331,13 +366,19 @@ export async function handleAsk(
         stopWhen: isStepCount(limits.maxToolSteps),
         maxOutputTokens: limits.maxOutputTokens,
         maxRetries: 1,
+        onChunk: ({ chunk }) => {
+          if (firstTextMs < 0 && chunk.type === "text-delta") firstTextMs = now() - t0;
+        },
         onEnd: (event) => {
           const costUsd = stepCost(event.steps);
+          const timing = stepTiming(event.steps as readonly StepPerf[]);
+          const latencyMs = now() - t0;
           noteSpend(costUsd);
           const toolCalls = runs.filter((r) => r.name !== HANDOFF_TOOL).length;
           const handoff = runs.some((r) => r.name === HANDOFF_TOOL);
           const tokensIn = event.totalUsage.inputTokens ?? 0;
           const tokensOut = event.totalUsage.outputTokens ?? 0;
+          log("ask.timing", { totalMs: latencyMs, preModelMs, firstTextMs, modelMs: timing.modelMs, toolMs: timing.toolMs, steps: timing.steps });
           ctx.waitUntil(
             logger.turn(
               {
@@ -346,10 +387,15 @@ export async function handleAsk(
                 status: "ok",
                 code: "",
                 country,
-                latencyMs: now() - t0,
+                latencyMs,
                 toolCalls,
                 costMicroUsd: Math.round(costUsd * 1_000_000),
                 tokensOut,
+                firstTextMs,
+                preModelMs,
+                modelSteps: event.steps.length,
+                modelMs: timing.modelMs,
+                toolMs: timing.toolMs,
               },
               {
                 id: body.id,

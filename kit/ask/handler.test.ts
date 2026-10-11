@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { McpConfig } from "../core/config.js";
 import type { Env } from "../core/env.js";
 import { defineTool } from "../core/tool.js";
-import { handleAsk, resetAskCaches, type AskDeps } from "./handler.js";
+import { handleAsk, resetAskCaches, stepTiming, type AskDeps } from "./handler.js";
 import { issueSession, verifySession } from "./session.js";
 import { appendTurn, getConversation, getMessages } from "./store.js";
 import { FakeD1 } from "./testing/fake-d1.js";
@@ -288,6 +288,22 @@ describe("POST /ask success", () => {
     expect(JSON.parse(msgs[1]!.tools ?? "[]")).toEqual([{ name: "search_content", slug: undefined }].map(({ name }) => ({ name })));
   });
 
+  it("records the turn's timing in the ask.turn row", async () => {
+    const points: { blobs: string[]; doubles: number[] }[] = [];
+    const s = setup({ envOverrides: { METRICS: { writeDataPoint: (p: { blobs: string[]; doubles: number[] }) => points.push(p) } } as Partial<Env> });
+    let clock = NOW;
+    await s.run(req(askBody("Giá WordPress?")), { now: () => (clock += 10) });
+    const turn = points.find((p) => p.blobs[1] === "ask.turn");
+    expect(turn).toBeDefined();
+    const [latency, toolCalls, , , firstText, preModel, steps] = turn!.doubles;
+    expect(toolCalls).toBe(1);
+    expect(steps).toBe(2);
+    expect(preModel).toBeGreaterThan(0);
+    expect(firstText).toBeGreaterThan(preModel!);
+    expect(latency).toBeGreaterThanOrEqual(firstText!);
+    expect(turn!.doubles).toHaveLength(9);
+  });
+
   it("a second turn with the session needs no Turnstile and sees only stored history", async () => {
     const s = setup();
     const first = await s.run(req(askBody("Câu hỏi một")));
@@ -344,5 +360,24 @@ describe("POST /ask/summary and /ask/lead", () => {
     const { res } = await s.run(req({ id: ID }, { path: "/ask/lead", session: token }));
     expect(res.status).toBe(200);
     expect((await getConversation(s.db, ID))?.lead_sent).toBe(1);
+  });
+});
+
+describe("stepTiming", () => {
+  it("splits each step into model wait and tool time", () => {
+    const t = stepTiming([
+      { performance: { stepTimeMs: 900, timeToFirstOutputMs: 600, toolExecutionMs: { a: 120 } }, toolCalls: [{ toolName: "search_content" }] },
+      { performance: { stepTimeMs: 1500, timeToFirstOutputMs: 700, toolExecutionMs: {} }, toolCalls: [] },
+    ]);
+    expect(t.modelMs).toBe(780 + 1500);
+    expect(t.toolMs).toBe(120);
+    expect(t.steps).toEqual([
+      { ms: 900, firstOutputMs: 600, toolMs: 120, tools: ["search_content"] },
+      { ms: 1500, firstOutputMs: 700, toolMs: 0, tools: [] },
+    ]);
+  });
+
+  it("tolerates steps without performance data", () => {
+    expect(stepTiming([{}])).toEqual({ modelMs: 0, toolMs: 0, steps: [{ ms: 0, firstOutputMs: null, toolMs: 0, tools: [] }] });
   });
 });
