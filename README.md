@@ -404,9 +404,13 @@ ask: {
 | `POST /ask/lead` | `{ id }` + session: marks the conversation as having sent a lead. |
 | `GET /dash/conversations` | Review page (stripped text, tools, cited pages; keep a question, delete a conversation). **Always behind Access**, even with `DASH_PUBLIC=true`. |
 
-Checks run cheapest first: origin → body → session or Turnstile → per-IP
-limit (`ASK_RATE_LIMITER`) → conversation cap (D1) → daily budget (D1 spend,
-cached 60 s) → model. Errors are JSON `{ code }`: `origin`, `bad_request`,
+Checks are judged in this order: origin → body → session or Turnstile →
+per-IP limit (`ASK_RATE_LIMITER`) → conversation cap (D1) → daily budget (D1
+spend, cached 60 s) → model. Origin and body come first; Turnstile, the
+limiter and the D1 reads then run together (the conversation, its messages
+and the spend in one D1 `batch`), so a turn waits for the slowest of them
+instead of their sum. Cost of that: a request with a bad Turnstile token
+still makes one D1 read and counts against the rate limit. Errors are JSON `{ code }`: `origin`, `bad_request`,
 `verify_failed`, `session_expired`, `rate_limited`, `conversation_limit`,
 `budget`, `upstream`. Only the last user message is read from the request;
 the history comes from D1, so a client can't write the assistant's turns.

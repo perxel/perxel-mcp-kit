@@ -208,6 +208,38 @@ export async function listConversations(db: D1Database, opts: ListConversationsI
   return res.results;
 }
 
+export interface TurnState {
+  conversation: ConversationRow | null;
+  messages: MessageRow[];
+  /** Spend since `costSinceMs`; null when it was not asked for. */
+  costUsd: number | null;
+}
+
+/**
+ * Everything a turn reads before the model call, in one D1 round trip (`batch`): the
+ * conversation, its messages and, when `costSinceMs` is given, the spend since then.
+ */
+export async function loadTurnState(db: D1Database, id: string, costSinceMs: number | null): Promise<TurnState> {
+  const statements = [
+    db
+      .prepare(
+        "SELECT id, started_at, last_at, locale, page, country, caller_key, turns, tokens_in, tokens_out, cost_usd, model, topic, handoff, lead_sent, cited, text_deleted_at FROM conversations WHERE id = ?",
+      )
+      .bind(id),
+    db.prepare("SELECT conversation_id, seq, role, text, tools, created_at FROM messages WHERE conversation_id = ? ORDER BY seq ASC").bind(id),
+    ...(costSinceMs === null
+      ? []
+      : [db.prepare("SELECT COALESCE(SUM(cost_usd), 0) AS total FROM conversations WHERE last_at >= ?").bind(costSinceMs)]),
+  ];
+  const [convo, msgs, cost] = await db.batch(statements);
+  const total = (cost?.results[0] as { total?: unknown } | undefined)?.total;
+  return {
+    conversation: ((convo?.results[0] as ConversationRow | undefined) ?? null),
+    messages: (msgs?.results ?? []) as MessageRow[],
+    costUsd: costSinceMs === null ? null : typeof total === "number" ? total : 0,
+  };
+}
+
 export async function getMessages(db: D1Database, id: string): Promise<MessageRow[]> {
   const res = await db
     .prepare("SELECT conversation_id, seq, role, text, tools, created_at FROM messages WHERE conversation_id = ? ORDER BY seq ASC")

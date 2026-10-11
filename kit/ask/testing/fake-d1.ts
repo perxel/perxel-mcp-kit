@@ -63,7 +63,8 @@ export class FakeD1 {
 
   async batch<T = Record<string, unknown>>(statements: FakeD1Statement[]): Promise<FakeD1Result<T>[]> {
     const out: FakeD1Result<T>[] = [];
-    for (const s of statements) out.push(await s.run<T>());
+    // Like D1: every statement's rows come back (empty for writes).
+    for (const s of statements) out.push(await s.all<T>());
     return out;
   }
 

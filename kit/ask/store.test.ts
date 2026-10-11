@@ -12,6 +12,7 @@ import {
   idleWithoutTopic,
   keepQuestion,
   listConversations,
+  loadTurnState,
   markHandoff,
   markLeadSent,
   setTopic,
@@ -48,6 +49,17 @@ function turn(overrides: Partial<AppendTurnInput> = {}): AppendTurnInput {
 }
 
 describe("ask store", () => {
+  it("loadTurnState reads the conversation, its messages and the spend in one batch", async () => {
+    const { db } = testDb();
+    expect(await loadTurnState(db, "conv-1", 0)).toEqual({ conversation: null, messages: [], costUsd: 0 });
+    await appendTurn(db, turn());
+    const state = await loadTurnState(db, "conv-1", 0);
+    expect(state.conversation?.turns).toBe(1);
+    expect(state.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(state.costUsd).toBeCloseTo(0.001);
+    expect((await loadTurnState(db, "conv-1", null)).costUsd).toBeNull();
+  });
+
   it("getConversation returns null for an unknown id", async () => {
     const { db } = testDb();
     expect(await getConversation(db, "missing")).toBeNull();

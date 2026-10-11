@@ -22,15 +22,16 @@ import { cloudflareAskLogger, type AskLogger } from "./logger.js";
 import { askInstructions, summaryInstructions } from "./prompt.js";
 import { redact } from "./redact.js";
 import { issueSession, verifySession } from "./session.js";
-import { addCost, getConversation, getMessages, markLeadSent, todayCostUsd } from "./store.js";
+import { addCost, getConversation, getMessages, loadTurnState, markLeadSent, todayCostUsd } from "./store.js";
 import { buildAskTools, HANDOFF_TOOL, type AskToolRun } from "./tools.js";
 import { verifyTurnstile } from "./turnstile.js";
 
 /**
  * `/ask` and its sub-routes, mounted by `createWorker` only when `config.ask` is set.
- * Checks run cheapest first (contract in the kit README, "Ask"):
+ * Checks are judged in this order (contract in the kit README, "Ask"):
  * origin → method/size → session or Turnstile → per-IP rate limit → conversation
- * caps → daily budget → model call. Only the last user message is taken from the
+ * caps → daily budget → model call. Turnstile, the limiter and the D1 reads run
+ * together; only origin and body come first. Only the last user message is taken from the
  * request; history comes from D1, so a client cannot inject assistant turns.
  */
 
@@ -266,7 +267,10 @@ export async function handleAsk(
   const body = parseAskBody(raw, limits.maxInputChars);
   if (!body) return refuse("bad_request");
 
-  // 3. Session, or Turnstile on the first turn.
+  // 3 to 6 need Turnstile (first turn only), the rate limiter and D1. Those calls run
+  // together (one D1 batch for the conversation, its messages and, when the 60 s cache is
+  // stale, today's spend) and their results are judged in the documented order, so the
+  // answer is the same as checking one by one, minus the waiting.
   const secret = env.ASK_SESSION_SECRET as string | undefined;
   if (!secret) {
     log("ask.misconfigured", { missing: "ASK_SESSION_SECRET" });
@@ -274,51 +278,57 @@ export async function handleAsk(
   }
   const session = await verifySession(secret, body.id, request.headers.get("x-ask-session"), now());
   if (session === "expired") return refuse("session_expired");
-  if (session !== "ok") {
-    const check = await verifyTurnstile({
-      secret: env.TURNSTILE_SECRET as string | undefined,
-      token: body.turnstileToken,
-      allowedOrigins: ask.allowedOrigins,
-      local,
-      ...(ip ? { ip } : {}),
-      ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
-    });
-    if (!check.ok) {
-      log("ask.turnstile_failed", { reason: check.reason });
-      return refuse("verify_failed");
-    }
-  }
-
-  // 4. Per-IP rate limit (missing binding: allow, as in local dev).
-  const limiter = env.ASK_RATE_LIMITER;
-  if (limiter && callerKey) {
-    const { success } = await limiter.limit({ key: callerKey });
-    if (!success) return refuse("rate_limited", { "Retry-After": "60" });
-  }
-
-  // 5. Conversation caps.
   const db = env.ASK_DB;
   if (!db) {
     log("ask.misconfigured", { missing: "ASK_DB" });
     return refuse("upstream");
   }
-  const existing = await getConversation(db, body.id);
+  const limiter = env.ASK_RATE_LIMITER;
+  const day = vietnamDate(new Date(now()));
+  const cachedSpend = budgetCache && budgetCache.day === day && now() - budgetCache.at < BUDGET_CACHE_MS ? budgetCache.usd : null;
+  const [check, limit, state] = await Promise.all([
+    session === "ok"
+      ? Promise.resolve({ ok: true } as const)
+      : verifyTurnstile({
+          secret: env.TURNSTILE_SECRET as string | undefined,
+          token: body.turnstileToken,
+          allowedOrigins: ask.allowedOrigins,
+          local,
+          ...(ip ? { ip } : {}),
+          ...(deps.fetcher ? { fetcher: deps.fetcher } : {}),
+        }),
+    // Missing binding: allow, as in local dev.
+    limiter && callerKey ? limiter.limit({ key: callerKey }) : Promise.resolve({ success: true }),
+    loadTurnState(db, body.id, cachedSpend === null ? vietnamDayStart(now()) : null),
+  ]);
+  if (state.costUsd !== null) budgetCache = { day, at: now(), usd: state.costUsd };
+  const spent = cachedSpend ?? state.costUsd ?? 0;
+
+  // 3. Session, or Turnstile on the first turn.
+  if (!check.ok) {
+    log("ask.turnstile_failed", { reason: "reason" in check ? check.reason : undefined });
+    return refuse("verify_failed");
+  }
+
+  // 4. Per-IP rate limit.
+  if (!limit.success) return refuse("rate_limited", { "Retry-After": "60" });
+
+  // 5. Conversation caps.
+  const existing = state.conversation;
   if (existing && (existing.turns >= limits.messagesPerConversation || existing.text_deleted_at !== null)) {
     return refuse("conversation_limit");
   }
   if (existing && existing.locale !== body.locale) return refuse("bad_request");
 
   // 6. Daily budget.
-  if ((await spentToday(db, now())) >= limits.dailyBudgetUsd) return refuse("budget");
+  if (spent >= limits.dailyBudgetUsd) return refuse("budget");
   if (!env.OPENROUTER_API_KEY && !deps.modelFor) {
     log("ask.misconfigured", { missing: "OPENROUTER_API_KEY" });
     return refuse("upstream");
   }
 
   // 7. The model call.
-  const history: ModelMessage[] = existing
-    ? (await getMessages(db, body.id)).map((m) => ({ role: m.role, content: m.text }) as ModelMessage)
-    : [];
+  const history: ModelMessage[] = existing ? state.messages.map((m) => ({ role: m.role, content: m.text }) as ModelMessage) : [];
   const model = (deps.modelFor ?? openRouterModel)(ask.model, ask, env);
   const runs: AskToolRun[] = [];
   const cited: string[] = [];

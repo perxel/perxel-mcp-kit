@@ -228,6 +228,23 @@ describe("POST /ask refusals", () => {
     expect(code(body)).toBe("verify_failed");
   });
 
+  it("Turnstile and the rate limiter run at the same time", async () => {
+    let limiterCalled!: () => void;
+    const limiterHit = new Promise<void>((r) => (limiterCalled = r));
+    const s = setup({
+      envOverrides: { ASK_RATE_LIMITER: { limit: async () => (limiterCalled(), { success: true }) } } as Partial<Env>,
+    });
+    // Turnstile answers only once the limiter has been called: one after the other would hang.
+    const fetcher = (async () => {
+      await limiterHit;
+      return Response.json({ success: true, hostname: "example.com" });
+    }) as typeof fetch;
+    const timeout = new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 2000));
+    const result = await Promise.race([s.run(req(askBody("hi")), { fetcher }), timeout]);
+    expect(result).not.toBe("timeout");
+    expect((result as { res: Response }).res.status).toBe(200);
+  });
+
   it("conversation_limit: 20 turns already", async () => {
     const s = setup();
     await seedTurns(s.db, 20);
