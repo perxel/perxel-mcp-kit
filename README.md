@@ -200,6 +200,10 @@ export default createWorker(config, { sources: { content } });
   tool call would get (`memory`, `fetch`, `kv-fallback`, or `empty` → 503).
 - Content changes show up within about 10 minutes of the site deploy, with
   no MCP redeploy.
+- Search tools: `searchItems()` ranks compact hits; add `passages(body, query)`
+  to the top 3 hits so Ask (and any client) can answer from the search result
+  alone. Without them every answer needs a detail call, one more model round
+  trip (about 1 to 2 s with Ask).
 
 ## Local development
 

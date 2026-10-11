@@ -16,7 +16,7 @@ Every MCP built from this kit follows this checklist. The kit enforces it; clone
 - Each tool declares `access: "public" | "private"` plus a scope when private.
 - Tools are read-only by default; write tools carry different risk and liability (price separately).
 - Only what a tool returns reaches the AI and costs tokens:
-  - List and search tools return compact items only: title, slug, a short excerpt, URL and category. Never full text.
+  - List and search tools return compact items only: title, slug, a short excerpt, URL and category. Never full text. A search tool may add `passages` to its top few hits: at most 2 paragraphs of about 400 characters that match the query (`passages()` in `kit/core/search.ts`), so a question can be answered without a detail call.
   - Full text comes only from a detail tool, for one item (e.g. `get_insight(slug)`).
   - Every list has a `limit` with a small default (e.g. 5, max 20).
   - No "dump everything" tool. Even `list_all` returns titles and slugs only.
@@ -54,7 +54,7 @@ Every MCP built from this kit follows this checklist. The kit enforces it; clone
                "category": "...", "date": "YYYY-MM-DD or null", "tags": [], "body": "plain text" } ] }
 ```
 
-- Search ignores Vietnamese diacritics (`kit/core/fold-text.ts`); list/search results are compact items (no `body`); full text comes only from a get-by-slug detail tool.
+- Search ignores Vietnamese diacritics (`kit/core/fold-text.ts`); list/search results are compact items (no `body`, optional matching `passages` on the top hits); full text comes only from a get-by-slug detail tool.
 
 ## Metrics row
 

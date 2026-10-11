@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { bySlug, clampLimit, searchItems, type StaticItem } from "./search.js";
+import { bySlug, passages, clampLimit, searchItems, type StaticItem } from "./search.js";
 
 const ItemSchema = z.object({
   type: z.string(),
@@ -117,5 +117,41 @@ describe("bySlug", () => {
     expect(found?.title).toBe("Gói bảo trì hằng năm");
     expect(found?.body.length).toBeGreaterThan(0);
     expect(bySlug(items, "no-such-slug")).toBeUndefined();
+  });
+});
+
+describe("passages", () => {
+  const body = [
+    "Perxel builds WordPress sites with a custom theme for each project.",
+    "Pricing",
+    "A custom theme starts from 1,200 USD for a five-page site. Extra templates are quoted per page.",
+    "Hosting is chosen by the client. Perxel can recommend a host.",
+    "Giá thiết kế",
+    "Gói Next.js bắt đầu từ 2.000 USD, đã gồm TinaCMS.",
+  ].join("\n\n");
+
+  it("returns the best matching paragraphs in page order, headings kept", () => {
+    expect(passages(body, "custom theme price pricing")).toEqual([
+      "Perxel builds WordPress sites with a custom theme for each project.",
+      "Pricing: A custom theme starts from 1,200 USD for a five-page site. Extra templates are quoted per page.",
+    ]);
+  });
+
+  it("ignores diacritics and matches word starts only", () => {
+    expect(passages(body, "gia nextjs tina")).toEqual(["Giá thiết kế: Gói Next.js bắt đầu từ 2.000 USD, đã gồm TinaCMS."]);
+    expect(passages(body, "ost")).toEqual([]); // inside "host", not a word start
+  });
+
+  it("returns nothing for a blank query or body, and respects max", () => {
+    expect(passages(body, "  ")).toEqual([]);
+    expect(passages("", "theme")).toEqual([]);
+    expect(passages(body, "perxel", { max: 1 })).toHaveLength(1);
+  });
+
+  it("cuts a long paragraph from the first matching sentence", () => {
+    const long = ["One filler sentence here.", "Another filler sentence.", "The plugin needs an API key.", "Then more text follows.", "And more."].join(" ");
+    const [p] = passages(long, "api key", { chars: 60 });
+    expect(p!.startsWith("… The plugin needs an API key.")).toBe(true);
+    expect(p!.length).toBeLessThanOrEqual(70);
   });
 });
