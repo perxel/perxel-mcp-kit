@@ -111,6 +111,8 @@ export interface AskTurn {
   answer: string;
   links: string[];
   handoff: boolean;
+  /** Content tool calls (the handoff not counted). */
+  tools?: number;
   error?: string;
 }
 
@@ -192,6 +194,7 @@ export function parseAskSse(text: string): AskTurn {
   const answer: string[] = [];
   const links: string[] = [];
   let handoff = false;
+  let tools = 0;
   let error: string | undefined;
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
@@ -214,6 +217,9 @@ export function parseAskSse(text: string): AskTurn {
         if (typeof part["url"] === "string" && !links.includes(part["url"])) links.push(part["url"]);
         break;
       case "tool-input-available":
+        if (part["toolName"] === HANDOFF_TOOL_NAME) handoff = true;
+        else tools++;
+        break;
       case "tool-input-start":
         if (part["toolName"] === HANDOFF_TOOL_NAME) handoff = true;
         break;
@@ -224,7 +230,7 @@ export function parseAskSse(text: string): AskTurn {
         break;
     }
   }
-  return { answer: answer.join(""), links, handoff, ...(error === undefined ? {} : { error }) };
+  return { answer: answer.join(""), links, handoff, tools, ...(error === undefined ? {} : { error }) };
 }
 
 /**
@@ -326,16 +332,28 @@ interface AskRow {
   pass: boolean;
   failed: string[];
   latencyMs: number;
+  /** ms from sending to the first answer text; null when none came. */
+  firstTextMs: number | null;
+  tools: number;
+}
+
+/** Nearest-rank percentile of a list of numbers; null when empty. */
+export function percentile(values: number[], p: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1))]!;
 }
 
 function printAskReport(rows: AskRow[]): void {
-  const header = ["id", "locale", "result", "failed", "ms"];
+  const header = ["id", "locale", "result", "failed", "first ms", "total ms", "tools"];
   const body = rows.map((row) => [
     row.id,
     row.locale,
     row.pass ? "pass" : "fail",
     row.failed.join("; ") || "-",
+    row.firstTextMs === null ? "-" : String(row.firstTextMs),
     String(row.latencyMs),
+    String(row.tools),
   ]);
   const widths = header.map((column, i) => Math.max(column.length, ...body.map((row) => row[i].length)));
   const line = (row: string[]): string =>
@@ -351,6 +369,28 @@ function printAskReport(rows: AskRow[]): void {
     const ok = group.filter((row) => row.pass).length;
     console.log(`  ${locale}: ${ok}/${group.length} (${pct(ok, group.length)})`);
   }
+  const first = rows.flatMap((row) => (row.firstTextMs === null ? [] : [row.firstTextMs]));
+  const total = rows.map((row) => row.latencyMs);
+  const fmt = (n: number | null): string => (n === null ? "-" : `${n} ms`);
+  console.log(`first text: p50 ${fmt(percentile(first, 50))}, p90 ${fmt(percentile(first, 90))}`);
+  console.log(`full answer: p50 ${fmt(percentile(total, 50))}, p90 ${fmt(percentile(total, 90))}`);
+  console.log(`tool calls per answer: ${(rows.reduce((a, row) => a + row.tools, 0) / rows.length).toFixed(2)}`);
+}
+
+/** Reads a streamed response to the end, noting when the first answer text arrived. */
+async function readTimed(res: Response, started: number): Promise<{ text: string; firstTextMs: number | null }> {
+  if (!res.body) return { text: await res.text(), firstTextMs: null };
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  let firstTextMs: number | null = null;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+    if (firstTextMs === null && text.includes('"type":"text-delta"')) firstTextMs = Date.now() - started;
+  }
+  return { text: text + decoder.decode(), firstTextMs };
 }
 
 async function runAsk(argv: string[]): Promise<void> {
@@ -381,6 +421,7 @@ async function runAsk(argv: string[]): Promise<void> {
   for (const question of questions) {
     const started = Date.now();
     let turn: AskTurn;
+    let firstTextMs: number | null = null;
     try {
       const res = await fetch(args.url, {
         method: "POST",
@@ -391,14 +432,16 @@ async function runAsk(argv: string[]): Promise<void> {
         },
         body: JSON.stringify(askRequestBody(question)),
       });
-      turn = askTurnFromResponse(res, await res.text());
+      const read = await readTimed(res, started);
+      firstTextMs = read.firstTextMs;
+      turn = askTurnFromResponse(res, read.text);
     } catch (err) {
       turn = { answer: "", links: [], handoff: false, error: err instanceof Error ? err.message : String(err) };
     }
     const latencyMs = Date.now() - started;
     const score = scoreAskAnswer(question, turn);
-    rows.push({ id: question.id, locale: question.locale, pass: score.pass, failed: score.failed, latencyMs });
-    console.log(`${score.pass ? "ok  " : "FAIL"} ${question.id} ${latencyMs}ms`);
+    rows.push({ id: question.id, locale: question.locale, pass: score.pass, failed: score.failed, latencyMs, firstTextMs, tools: turn.tools ?? 0 });
+    console.log(`${score.pass ? "ok  " : "FAIL"} ${question.id} first ${firstTextMs ?? "-"}ms, total ${latencyMs}ms, ${turn.tools ?? 0} tools`);
   }
   console.log("");
   printAskReport(rows);

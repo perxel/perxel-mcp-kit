@@ -423,7 +423,10 @@ the key in OpenRouter first), `TURNSTILE_SECRET`, `ASK_SESSION_SECRET`.
 
 Local dev: run `wrangler dev` with Cloudflare's Turnstile test secret
 `1x0000000000000000000000000000000AA` in `.dev.vars`, then
-`pnpm eval --ask evals/ask-questions.json` (local URLs only).
+`pnpm eval --ask evals/ask-questions.json` (local URLs only). Besides the
+pass rate it prints, per question and as p50/p90, the time to the first
+answer text, the full answer and the content tool calls per answer: run it
+before and after a prompt or tool change to see what it did to speed.
 
 Metrics: tool calls made by Ask are ordinary rows with client `ask`; each
 turn adds one `ask.turn` row (see `STANDARD.md`). The public dashboard shows

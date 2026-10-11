@@ -4,6 +4,7 @@ import {
   parseAskQuestions,
   parseAskSse,
   parseQuestions,
+  percentile,
   scoreAskAnswer,
   TEST_TURNSTILE_TOKEN,
   type AskQuestion,
@@ -77,6 +78,14 @@ function sse(...events: unknown[]): string {
   return events.map((event) => `data: ${event === "[DONE]" ? "[DONE]" : JSON.stringify(event)}\n\n`).join("");
 }
 
+describe("percentile", () => {
+  it("nearest rank, null when empty", () => {
+    expect(percentile([], 50)).toBeNull();
+    expect(percentile([300, 100, 200], 50)).toBe(200);
+    expect(percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 90)).toBe(9);
+  });
+});
+
 describe("parseAskSse", () => {
   it("collects text deltas, source urls and the handoff tool", () => {
     const turn = parseAskSse(
@@ -96,10 +105,11 @@ describe("parseAskSse", () => {
       answer: "Perxel có custom theme.",
       links: ["https://perxel.com/services/wordpress-custom-theme"],
       handoff: true,
+      tools: 0,
     });
   });
 
-  it("dedupes links and ignores other tools", () => {
+  it("dedupes links and counts content tool calls", () => {
     const turn = parseAskSse(
       sse(
         { type: "source-url", sourceId: "a", url: "https://perxel.com/pricing" },
@@ -109,7 +119,8 @@ describe("parseAskSse", () => {
         { type: "text-delta", id: "t", delta: "20.000.000đ" },
       ),
     );
-    expect(turn).toEqual({ answer: "20.000.000đ", links: ["https://perxel.com/pricing"], handoff: false });
+    // Only `tool-input-available` counts: a tool's `tool-input-start` precedes it.
+    expect(turn).toEqual({ answer: "20.000.000đ", links: ["https://perxel.com/pricing"], handoff: false, tools: 1 });
   });
 
   it("records an error chunk and skips junk lines", () => {
@@ -117,11 +128,13 @@ describe("parseAskSse", () => {
       answer: "",
       links: [],
       handoff: false,
+      tools: 0,
     });
     expect(parseAskSse(sse({ type: "error", errorText: "upstream" }))).toEqual({
       answer: "",
       links: [],
       handoff: false,
+      tools: 0,
       error: "upstream",
     });
   });
