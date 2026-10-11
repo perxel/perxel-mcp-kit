@@ -335,6 +335,8 @@ interface AskRow {
   /** ms from sending to the first answer text; null when none came. */
   firstTextMs: number | null;
   tools: number;
+  /** False when the turn was refused or errored: left out of the timing figures. */
+  answered: boolean;
 }
 
 /** Nearest-rank percentile of a list of numbers; null when empty. */
@@ -369,12 +371,15 @@ function printAskReport(rows: AskRow[]): void {
     const ok = group.filter((row) => row.pass).length;
     console.log(`  ${locale}: ${ok}/${group.length} (${pct(ok, group.length)})`);
   }
-  const first = rows.flatMap((row) => (row.firstTextMs === null ? [] : [row.firstTextMs]));
-  const total = rows.map((row) => row.latencyMs);
+  const answered = rows.filter((row) => row.answered);
+  const first = answered.flatMap((row) => (row.firstTextMs === null ? [] : [row.firstTextMs]));
+  const total = answered.map((row) => row.latencyMs);
   const fmt = (n: number | null): string => (n === null ? "-" : `${n} ms`);
-  console.log(`first text: p50 ${fmt(percentile(first, 50))}, p90 ${fmt(percentile(first, 90))}`);
-  console.log(`full answer: p50 ${fmt(percentile(total, 50))}, p90 ${fmt(percentile(total, 90))}`);
-  console.log(`tool calls per answer: ${(rows.reduce((a, row) => a + row.tools, 0) / rows.length).toFixed(2)}`);
+  console.log(`timing over ${answered.length} answered turns:`);
+  console.log(`  first text: p50 ${fmt(percentile(first, 50))}, p90 ${fmt(percentile(first, 90))}`);
+  console.log(`  full answer: p50 ${fmt(percentile(total, 50))}, p90 ${fmt(percentile(total, 90))}`);
+  const tools = answered.length ? answered.reduce((a, row) => a + row.tools, 0) / answered.length : 0;
+  console.log(`  tool calls per answer: ${tools.toFixed(2)}`);
 }
 
 /** Reads a streamed response to the end, noting when the first answer text arrived. */
@@ -419,19 +424,30 @@ async function runAsk(argv: string[]): Promise<void> {
 
   const rows: AskRow[] = [];
   for (const question of questions) {
-    const started = Date.now();
+    let started = Date.now();
     let turn: AskTurn;
     let firstTextMs: number | null = null;
     try {
-      const res = await fetch(args.url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "text/event-stream",
-          origin: args.origin,
-        },
-        body: JSON.stringify(askRequestBody(question)),
-      });
+      const send = () =>
+        fetch(args.url, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "text/event-stream",
+            origin: args.origin,
+          },
+          body: JSON.stringify(askRequestBody(question)),
+        });
+      let res = await send();
+      // The per-IP limiter (6 a minute by default) applies locally too: wait it out once.
+      if (res.status === 429) {
+        const wait = Number(res.headers.get("retry-after") ?? "60") || 60;
+        await res.body?.cancel();
+        console.log(`     rate limited, waiting ${wait}s`);
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        started = Date.now();
+        res = await send();
+      }
       const read = await readTimed(res, started);
       firstTextMs = read.firstTextMs;
       turn = askTurnFromResponse(res, read.text);
@@ -440,7 +456,7 @@ async function runAsk(argv: string[]): Promise<void> {
     }
     const latencyMs = Date.now() - started;
     const score = scoreAskAnswer(question, turn);
-    rows.push({ id: question.id, locale: question.locale, pass: score.pass, failed: score.failed, latencyMs, firstTextMs, tools: turn.tools ?? 0 });
+    rows.push({ id: question.id, locale: question.locale, pass: score.pass, failed: score.failed, latencyMs, firstTextMs, tools: turn.tools ?? 0, answered: !turn.error });
     console.log(`${score.pass ? "ok  " : "FAIL"} ${question.id} first ${firstTextMs ?? "-"}ms, total ${latencyMs}ms, ${turn.tools ?? 0} tools`);
   }
   console.log("");
