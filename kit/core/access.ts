@@ -117,7 +117,9 @@ export async function handleAuthorizeGet(
   }
   const secret = env.COOKIE_ENCRYPTION_KEY;
   try {
-    if (secret && (await api.isConsentRemembered(request, authRequest, { secret }))) {
+    // A request naming no scope (claude.ai sends none) is offered every scope on the consent page instead: a remembered
+    // approval of "nothing" would grant an empty scope list and every private tool would answer insufficient_scope.
+    if (secret && authRequest.scope.length > 0 && (await api.isConsentRemembered(request, authRequest, { secret }))) {
       return await redirectToAccess(request, env, api, authRequest, authRequest.scope);
     }
   } catch (err) {
@@ -138,7 +140,7 @@ export async function handleAuthorizeGet(
     clientName: facts.clientName,
     redirectHost: facts.redirectHost,
     redirectIsLoopback: facts.redirectIsLoopback,
-    scopes: facts.scope.map((name) => ({ name, description: config.scopes[name] ?? "" })),
+    scopes: (facts.scope.length > 0 ? facts.scope : Object.keys(config.scopes)).map((name) => ({ name, description: config.scopes[name] ?? "" })),
     handle: consent.handle,
   });
   const headers = new Headers(consent.headers);
