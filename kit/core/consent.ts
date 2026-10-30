@@ -56,9 +56,9 @@ export function renderConsentPage(opts: {
 <h1>${escapeHtml(opts.clientName)} wants to access ${escapeHtml(opts.mcpName)}</h1>
 <p>After you approve and sign in, the app returns to <strong>${escapeHtml(opts.redirectHost)}</strong>.</p>
 ${loopbackWarning}
+<form method="post" action="/authorize">
 <h2>Permissions</h2>
 ${scopes}
-<form method="post" action="/authorize">
 <input type="hidden" name="handle" value="${escapeHtml(opts.handle)}">
 <button type="submit" name="decision" value="allow">Allow</button>
 <button type="submit" name="decision" value="deny">Deny</button>

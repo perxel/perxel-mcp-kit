@@ -339,6 +339,13 @@ describe("redirect URIs and consent", () => {
     expect(res.headers.get("X-Frame-Options")).toBe("DENY");
   });
 
+  it("consent page: the scope checkboxes are inside the form, so Allow sends them", async () => {
+    const { renderConsentPage } = await import("../core/consent.js");
+    const html = renderConsentPage({ mcpName: "M", clientName: "Claude", redirectHost: "claude.ai", redirectIsLoopback: false, scopes: [{ name: "private:read", description: "r" }], handle: "h" });
+    const form = html.slice(html.indexOf("<form"), html.indexOf("</form>"));
+    expect(form).toContain('name="scope" value="private:read"');
+  });
+
   it("consent page for Claude shows claude.ai with no loopback warning", async () => {
     const { call } = createCaller(worker, gateEnv.env);
     const reg = await call("/register", {
