@@ -29,6 +29,8 @@ const worker = createWorker(config);
 const publicTool = config.tools.find((t) => t.access === "public" && t.inputSchema.safeParse({}).success);
 // The private-tool gate paths need the example's private `whoami`; a clone with only public tools skips them.
 const hasPrivateTool = config.tools.some((t) => t.name === "whoami" && t.access === "private");
+// The 401's scope: whoami's alone, or every scope when the clone sets requireAuth.
+const CHALLENGE_SCOPE = config.requireAuth ? Object.keys(config.scopes).join(" ") : "private:read";
 let gateEnv: GateTestEnv;
 let restoreFetch: () => void;
 
@@ -102,7 +104,7 @@ describe("gate", () => {
     const before = gateEnv.points.length;
     const res = await postMcp(gateEnv.env, toolCallBody("whoami"));
     expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toBe(`Bearer resource_metadata="${META}", scope="private:read"`);
+    expect(res.headers.get("WWW-Authenticate")).toBe(`Bearer resource_metadata="${META}", scope="${CHALLENGE_SCOPE}"`);
     expect(await res.json()).toEqual({ error: "unauthorized" });
     const rows = gateEnv.points.slice(before);
     expect(rows).toHaveLength(1);
@@ -117,7 +119,7 @@ describe("gate", () => {
       "Mcp-Name": "whoami",
     });
     expect(res.status).toBe(401);
-    expect(res.headers.get("WWW-Authenticate")).toContain('scope="private:read"');
+    expect(res.headers.get("WWW-Authenticate")).toContain(`scope="${CHALLENGE_SCOPE}"`);
   });
 
   it.skipIf(!hasPrivateTool)("batch containing one private call → 401", async () => {

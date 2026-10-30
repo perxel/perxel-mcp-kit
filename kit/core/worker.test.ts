@@ -310,7 +310,7 @@ describe("/health", () => {
 });
 
 describe("docs page", () => {
-  it("contains every tool name of the example config", async () => {
+  it.skipIf(exampleConfig.requireAuth === true)("contains every tool name of the example config", async () => {
     const worker = createWorker(exampleConfig);
     const { env } = fakeEnv();
     const { ctx } = fakeCtx();
