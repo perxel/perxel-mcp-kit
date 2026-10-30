@@ -82,16 +82,16 @@ describe("protocol", () => {
       name: string;
       inputSchema: JsonSchema;
     }[];
-    let exercised = 0;
-    for (const tool of listed) {
-      const args = badArguments(tool.inputSchema);
-      if (!args) continue;
-      const msg = await rpc("tools/call", { name: tool.name, arguments: args });
+    // Public tools only: this call has no token, so a private tool answers 401 before it validates its input
+    // (the gate tests cover private tools). A clone whose public tools take no typed input has nothing to check here.
+    const isPublic = new Set(config.tools.filter((t) => t.access === "public").map((t) => t.name));
+    const typed = listed.filter((t) => isPublic.has(t.name) && badArguments(t.inputSchema));
+    for (const tool of typed) {
+      const msg = await rpc("tools/call", { name: tool.name, arguments: badArguments(tool.inputSchema) });
       expect(msg.result?.["isError"]).toBe(true);
-      exercised += 1;
     }
-    // Guards against a vacuous pass if no tool takes typed input.
-    expect(exercised).toBeGreaterThan(0);
+    // In the kit itself (get_time takes a timezone) this must not pass vacuously.
+    if (config.slug === "example") expect(typed.length).toBeGreaterThan(0);
   });
 
   it("a 2025-era client (initialize then tools/list) works", async () => {
