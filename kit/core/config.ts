@@ -9,6 +9,9 @@ export interface McpConfig {
   /** Optional server instructions sent to the model on initialize: tool order, units, caveats. Keep short. */
   instructions?: string;
   scopes: Record<string, string>; // every private tool's scope must be listed
+  /** Sign-in before anything (initialize, tools/list, public tools): Claude asks for it when the connector is added, and
+   * the docs page lists no tools. For an owner-only MCP; leave it out for a public one. */
+  requireAuth?: boolean;
   tools: ToolDef[];
   docs: { contact: string };
   /** Optional Ask chat endpoint (/ask) over the public tools. Omit to serve no Ask routes. */

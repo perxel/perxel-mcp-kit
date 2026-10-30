@@ -67,7 +67,8 @@ function badArguments(schema: JsonSchema): Record<string, unknown> | null {
   return null;
 }
 
-describe("protocol", () => {
+// Every call here is anonymous: with requireAuth they all answer 401 (gate.test.ts covers that).
+describe.skipIf(config.requireAuth === true)("protocol", () => {
   it("tools/list matches the config and every input schema is an object", async () => {
     const msg = await rpc("tools/list", {});
     const tools = msg.result?.["tools"] as { name: string; inputSchema: JsonSchema }[];

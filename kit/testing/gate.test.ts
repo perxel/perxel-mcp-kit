@@ -89,7 +89,7 @@ const RESOURCE = `${PUBLIC_URL}/mcp`;
 const META = `${PUBLIC_URL}/.well-known/oauth-protected-resource/mcp`;
 
 describe("gate", () => {
-  it("public call without token → 200", async () => {
+  it.skipIf(config.requireAuth === true)("public call without token → 200", async () => {
     const res = await postMcp(gateEnv.env, toolCallBody(publicTool!.name));
     expect(res.status).toBe(200);
     const msg = await rpcResult(res);
@@ -131,9 +131,24 @@ describe("gate", () => {
     expect(gateEnv.points.slice(before)).toHaveLength(2);
   });
 
-  it("unknown tool without token passes the gate (the SDK answers the error)", async () => {
+  it.skipIf(config.requireAuth === true)("unknown tool without token passes the gate (the SDK answers the error)", async () => {
     const res = await postMcp(gateEnv.env, toolCallBody("nope_tool"));
     expect(res.status).toBe(200);
+  });
+});
+
+describe("requireAuth", () => {
+  const locked = createWorker({ ...config, requireAuth: true });
+  it("initialize and tools/list without token → 401 naming every scope", async () => {
+    for (const method of ["initialize", "tools/list"]) {
+      const res = await locked.fetch(mcpRequest({ jsonrpc: "2.0", id: 1, method, params: method === "initialize" ? { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t", version: "1" } } : {} }), gateEnv.env, fakeExecCtx().ctx);
+      expect(res.status).toBe(401);
+      expect(res.headers.get("WWW-Authenticate")).toContain(`scope="${Object.keys(config.scopes).join(" ")}"`);
+    }
+  });
+  it("the docs page lists no tools", async () => {
+    const html = await (await locked.fetch(new Request(`${TEST_PUBLIC_URL}/`), gateEnv.env, fakeExecCtx().ctx)).text();
+    for (const t of config.tools) expect(html).not.toContain(`>${t.name}<`);
   });
 });
 

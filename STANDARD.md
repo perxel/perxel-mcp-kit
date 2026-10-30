@@ -30,6 +30,7 @@ Every MCP built from this kit follows this checklist. The kit enforces it; clone
 - OAuth via `@cloudflare/workers-oauth-provider`: CIMD and DCR both on, PKCE S256, refresh-token rotation, RFC 9207.
 - Sign-in is Cloudflare Access for SaaS as OIDC (email one-time code), kept in one file (`kit/core/access.ts`) so it can be swapped.
 - Lazy authentication on one server: public calls pass through; a private call without a valid token is a real HTTP 401 with `WWW-Authenticate: Bearer resource_metadata=..., scope=...` so Claude shows a Connect card (a 200 tool error does not start sign-in); a token without the needed scope is 403 `insufficient_scope`.
+- Owner-only MCP: `requireAuth: true` in `mcp.config.ts` makes every `/mcp` request need a token (initialize and tools/list included, the 401 naming every scope), so Claude asks to sign in when the connector is added; the docs page then lists no tools. A request naming no scope (claude.ai sends none) is offered every scope on the consent page.
 - Claude requirements: redirect URIs `https://claude.ai/api/mcp/auth_callback` plus port-agnostic `http://localhost/callback` and `http://127.0.0.1/callback`; `resource` exactly equals the MCP URL; token endpoint accepts form-urlencoded; discovery/registration/token answer in under 10 s, refresh in under 30 s; `invalid_grant` for dead refresh tokens.
 - v1 supports Claude only (claude.ai web, Desktop, mobile, Claude Code).
 

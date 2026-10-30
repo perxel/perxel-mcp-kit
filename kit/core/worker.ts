@@ -423,7 +423,7 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
       const era = await isLegacyRequest(request).catch(() => true) ? ("legacy" as const) : ("modern" as const);
       const names = calls.map((call) => call.name);
       const authHeader = request.headers.get("Authorization");
-      const needsAuth = needsAuthFor(config, names);
+      const needsAuth = config.requireAuth === true || needsAuthFor(config, names);
 
       // Public call, no token: straight to the SDK, no identity.
       if (!authHeader && !needsAuth) {
@@ -435,7 +435,7 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
 
       // Private call, no token: the real 401 that makes Claude show Connect.
       if (!authHeader && needsAuth) {
-        const res = unauthorizedResponse(publicUrl, privateScopesFor(config, names));
+        const res = unauthorizedResponse(publicUrl, config.requireAuth ? Object.keys(config.scopes) : privateScopesFor(config, names));
         const bytes = new TextEncoder().encode(await res.clone().text()).length;
         const latencyMs = Date.now() - t0;
         ctx.waitUntil(
@@ -518,7 +518,7 @@ export function createWorker(config: McpConfig, opts?: WorkerOptions) {
     }
 
     if (path === "/" && request.method === "GET") {
-      return new Response(renderDocsPage(config, publicUrl), {
+      return new Response(renderDocsPage(config.requireAuth ? { ...config, tools: [] } : config, publicUrl), {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
