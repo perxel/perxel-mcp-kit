@@ -15,19 +15,19 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "1.2.1",
-    "@modelcontextprotocol/server": "2.2.0",
+    "@cloudflare/workers-oauth-provider": "1.2.4",
+    "@modelcontextprotocol/server": "2.4.0",
     "@openrouter/ai-sdk-provider": "3.1.0",
-    "ai": "7.0.116",
-    "zod": "4.6.5"
+    "ai": "7.0.166",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260930.1",
-    "@modelcontextprotocol/inspector": "2.8.0",
-    "@types/node": "26.6.3",
+    "@cloudflare/workers-types": "5.20261110.1",
+    "@modelcontextprotocol/inspector": "2.14.0",
+    "@types/node": "26.6.6",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vitest": "4.1.11",
-    "wrangler": "4.144.0"
+    "wrangler": "4.159.0"
   }
 }
