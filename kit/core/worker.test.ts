@@ -3,6 +3,7 @@ import { z } from "zod";
 import { defineConfig } from "./config.js";
 import type { Env } from "./env.js";
 import { recordToolCall } from "./metrics.js";
+import { definePrompt } from "./prompt.js";
 import { defineTool, ToolError } from "./tool.js";
 import { KIT_VERSION } from "./version.js";
 import { createWorker, type SourceStatus } from "./worker.js";
@@ -322,5 +323,53 @@ describe("docs page", () => {
     }
     expect(html).toContain("https://mcp.example.com/mcp");
     expect(html).toContain("Add custom connector");
+  });
+});
+
+describe("prompts", () => {
+  const explain = definePrompt({
+    name: "explain",
+    title: "Explain",
+    description: "Explains a word.",
+    argsSchema: z.object({ word: z.string().describe("The word.") }),
+    render: ({ word }) => `Explain ${word}.`,
+  });
+  const promptConfig = defineConfig({ ...config, prompts: [explain] });
+
+  async function rpc(worker: ReturnType<typeof createWorker>, method: string, params: unknown) {
+    const { env } = fakeEnv();
+    const { ctx } = fakeCtx();
+    const res = await worker.fetch(
+      new Request("https://mcp.example.com/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "CF-Connecting-IP": "1.2.3.4",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+      }),
+      env,
+      ctx,
+    );
+    const text = await res.text();
+    const dataLine = text.split("\n").map((l) => l.trim()).find((l) => l.startsWith("data:"));
+    return JSON.parse(dataLine ? dataLine.slice("data:".length).trim() : text) as { result?: Record<string, unknown> };
+  }
+
+  it("lists the config's prompts with their arguments", async () => {
+    const { result } = await rpc(createWorker(promptConfig), "prompts/list", {});
+    expect(result?.["prompts"]).toEqual([
+      expect.objectContaining({
+        name: "explain",
+        title: "Explain",
+        arguments: [expect.objectContaining({ name: "word", required: true })],
+      }),
+    ]);
+  });
+
+  it("renders a prompt as one user message", async () => {
+    const { result } = await rpc(createWorker(promptConfig), "prompts/get", { name: "explain", arguments: { word: "觉" } });
+    expect(result?.["messages"]).toEqual([{ role: "user", content: { type: "text", text: "Explain 觉." } }]);
   });
 });

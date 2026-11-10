@@ -159,6 +159,11 @@ wrangler.proxy.jsonc the metrics proxy (one per account)
    (default 5, max 20), no "dump everything" tool. Errors: throw
    `new ToolError("not_found" | "bad_input" | "upstream" | "unavailable", msg)`;
    anything else becomes `"Internal error"`.
+   Optional **prompts** (`prompts` in `mcp.config.ts`, `definePrompt` from
+   `kit/core/prompt.ts`): a template the user picks in the client (a slash
+   command, Claude's "+" menu) - `name`, `title`, `description`, an
+   `argsSchema` of strings, and `render(args)` returning the user message.
+   Public, no I/O: the model calls the tools after reading it.
 6. **Tests.** `pnpm typecheck && pnpm test`: unit tests per tool, the
    protocol test (runs against your own config), gate tests (200/401/403),
    dashboard and proxy tests.

@@ -91,6 +91,19 @@ export function buildServer(
       },
     );
   }
+  for (const prompt of config.prompts ?? []) {
+    server.registerPrompt(
+      prompt.name,
+      {
+        title: prompt.title,
+        description: prompt.description,
+        ...(prompt.argsSchema ? { argsSchema: prompt.argsSchema } : {}),
+      },
+      (args: Record<string, unknown>) => ({
+        messages: [{ role: "user" as const, content: { type: "text" as const, text: prompt.render(args ?? {}) } }],
+      }),
+    );
+  }
   return server;
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { defineConfig } from "./config.js";
+import { definePrompt } from "./prompt.js";
 import { defineTool, ToolError } from "./tool.js";
 
 const publicTool = defineTool({
@@ -54,6 +55,11 @@ describe("defineConfig", () => {
     expect(() =>
       defineConfig(baseConfig({ tools: [publicTool, publicTool] })),
     ).toThrow(/duplicate tool name "get_time"/);
+  });
+
+  it("rejects duplicate prompt names", () => {
+    const p = definePrompt({ name: "explain", title: "Explain", description: "d", render: () => "x" });
+    expect(() => defineConfig(baseConfig({ prompts: [p, p] }))).toThrow(/duplicate prompt name "explain"/);
   });
 
   it("rejects a private tool without a scope", () => {
