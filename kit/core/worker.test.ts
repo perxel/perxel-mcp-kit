@@ -184,6 +184,24 @@ describe("metrics rows", () => {
     expect(points[0].blobs?.[2]).toBe("error");
   });
 
+  it("logs the asked-for name of an unknown tool, capped and printable", async () => {
+    const worker = createWorker(config);
+    const { env } = fakeEnv();
+    const { ctx, waited } = fakeCtx();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (l: unknown) => void lines.push(String(l));
+    try {
+      await callTool(worker, env, ctx, "word-analysis\u00e9" + "x".repeat(80));
+      await Promise.all(waited);
+    } finally {
+      console.log = orig;
+    }
+    const hit = lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l["event"] === "unknown_tool");
+    expect(hit?.["name"]).toBe(("word-analysis?" + "x".repeat(80)).slice(0, 64));
+    expect(hit?.["requestId"]).toEqual(expect.any(String));
+  });
+
   it("recordToolCall never throws without a METRICS binding", () => {
     expect(() =>
       recordToolCall({} as Env, {

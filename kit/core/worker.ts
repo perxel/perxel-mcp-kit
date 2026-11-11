@@ -234,6 +234,9 @@ async function serveMcp(opts: McpServeOpts): Promise<Response> {
           const tool = config.tools.find((t) => t.name === call.name);
           const idx = remaining.findIndex((f) => f.tool === call.name);
           const finish = idx >= 0 ? remaining.splice(idx, 1)[0] : undefined;
+          // The asked-for name goes to Workers Logs only (never the metrics
+          // row), so we can see what clients expect; capped, printable only.
+          if (!tool) log("unknown_tool", { name: call.name.replace(/[^\x20-\x7e]/g, "?").slice(0, 64) });
           recordToolCall(env, {
             callerKey: facts.callerKey,
             slug: config.slug,
