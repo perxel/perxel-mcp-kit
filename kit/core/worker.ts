@@ -218,11 +218,16 @@ async function serveMcp(opts: McpServeOpts): Promise<Response> {
     { legacy: "stateless" },
   );
   const res = await perRequest.fetch(request);
-  const bytes = await res
-    .clone()
-    .text()
-    .then((t) => new TextEncoder().encode(t).length)
-    .catch(() => -1);
+  // Read the body for its size only on a tools/call: that response ends. A
+  // stream that stays open (2026-07-28 `subscriptions/listen`) would never
+  // end, so reading it would hold the response back until the client gives up.
+  const bytes = calls.length > 0
+    ? await res
+      .clone()
+      .text()
+      .then((t) => new TextEncoder().encode(t).length)
+      .catch(() => -1)
+    : -1;
   const latencyMs = Date.now() - t0;
 
   if (calls.length > 0) {

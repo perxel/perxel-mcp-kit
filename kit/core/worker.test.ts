@@ -391,3 +391,31 @@ describe("prompts", () => {
     expect(result?.["messages"]).toEqual([{ role: "user", content: { type: "text", text: "Explain 觉." } }]);
   });
 });
+
+describe("subscriptions/listen (2026-07-28)", () => {
+  it("returns the open stream at once with the acknowledgement, not after it ends", async () => {
+    const worker = createWorker(config);
+    const { env } = fakeEnv();
+    const { ctx } = fakeCtx();
+    const method = "subscriptions/listen";
+    const meta = { "io.modelcontextprotocol/clientInfo": { name: "t", version: "1" }, "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} };
+    const res = await Promise.race([
+      worker.fetch(
+        new Request("https://mcp.example.com/mcp", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "application/json, text/event-stream", "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method, "CF-Connecting-IP": "1.2.3.4" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 9, method, params: { notifications: { toolsListChanged: true }, _meta: meta } }),
+        }),
+        env,
+        ctx,
+      ),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("no response within 2s")), 2000)),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const reader = res.body!.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    expect(first).toContain("notifications/subscriptions/acknowledged");
+    await reader.cancel();
+  });
+});
