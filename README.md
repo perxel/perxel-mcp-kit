@@ -180,6 +180,10 @@ one JSON file at build time and the MCP reads it:
 - The file must be at a **public URL** (e.g. `https://example.com/content.json`),
   set as `CONTENT_URL`. The Worker has no filesystem, so a file in the repo
   isn't read at runtime.
+- **Private data:** put the file in an R2 bucket, bind it in
+  `wrangler.mcp.jsonc` (`r2_buckets: [{ binding: "CATALOG", bucket_name: "..." }]`)
+  and pass `r2: { bucket: (env) => env.CATALOG as R2Bucket, key: "catalog.json" }`
+  instead of `url`. Nothing is public; the loading order is the same.
 - Recommended shape and search rules: `STANDARD.md` → "Static JSON source".
 - In `src/`, create the source once at module level and pass it to both the
   tools and `/health`:
