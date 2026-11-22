@@ -382,7 +382,7 @@ export async function handleAsk(
       });
       const result = streamText({
         model,
-        instructions: askInstructions(ask, body.locale),
+        instructions: askInstructions(ask, body.locale, body.page),
         ...(askProviderOptions(ask) ? { providerOptions: askProviderOptions(ask) } : {}),
         messages: [...history, { role: "user", content: userText }],
         tools,
