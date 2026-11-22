@@ -32,6 +32,11 @@ describe("ask config", () => {
     expect(() => defineConfig(config(undefined))).not.toThrow();
     expect(() => defineConfig(config(ask({ allowedOrigins: ["http://localhost:3000"] })))).not.toThrow();
     expect(() => defineConfig(config(ask({ actions: ["lead", "subscribe"] })))).not.toThrow();
+    expect(() => defineConfig(config(ask({ provider: "anthropic", model: "claude-haiku-5-5", effort: "low" })))).not.toThrow();
+    expect(() =>
+      defineConfig(config(ask({ provider: "anthropic", model: "claude-new", pricing: { "claude-new": { inputPerMTok: 1, outputPerMTok: 2 } } }))),
+    ).not.toThrow();
+    expect(() => defineConfig(config(ask({ limits: { questionsPerVisitorPerDay: 5, questionsPerIpPerDay: 20 } })))).not.toThrow();
   });
 
   it.each([
@@ -51,6 +56,15 @@ describe("ask config", () => {
     ["unknown action", { actions: ["call"] as unknown as AskConfig["actions"] }],
     ["duplicate action", { actions: ["lead", "lead"] }],
     ["bad handoff locale", { handoff: [{ label: "x", href: "y", locale: "fr" as "vi" }] }],
+    ["unknown provider", { provider: "openai" as "anthropic" }],
+    ["Anthropic model with no price", { provider: "anthropic", model: "claude-new" }],
+    ["Anthropic summary model with no price", { provider: "anthropic", model: "claude-haiku-5-5", summaryModel: "claude-new" }],
+    ["fallback models on Anthropic", { provider: "anthropic", model: "claude-haiku-5-5", fallbackModels: ["claude-sonnet-5-5"] }],
+    ["effort on OpenRouter", { effort: "low" }],
+    ["unknown effort", { provider: "anthropic", model: "claude-haiku-5-5", effort: "huge" as "low" }],
+    ["half a price", { provider: "anthropic", model: "x", pricing: { x: { inputPerMTok: 1 } as never } }],
+    ["negative price", { provider: "anthropic", model: "x", pricing: { x: { inputPerMTok: -1, outputPerMTok: 1 } } }],
+    ["zero question limit", { limits: { questionsPerVisitorPerDay: 0 } }],
   ])("rejects %s", (_name, o) => {
     expect(() => defineConfig(config(ask(o as Partial<AskConfig>)))).toThrow(/ask\./);
   });
@@ -62,6 +76,8 @@ describe("ask config", () => {
       maxOutputTokens: 700,
       maxToolSteps: 4,
       perIpPerMinute: 6,
+      questionsPerVisitorPerDay: null,
+      questionsPerIpPerDay: null,
       dailyBudgetUsd: 3,
     });
     expect(askLimits(ask({ limits: { maxToolSteps: 2 } })).maxToolSteps).toBe(2);

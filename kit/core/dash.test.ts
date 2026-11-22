@@ -15,7 +15,7 @@ import {
 import type { Env } from "./env.js";
 import { createWorker } from "./worker.js";
 import { validateQuery } from "../metrics-proxy/validate.js";
-import { FakeD1 } from "../ask/testing/fake-d1.js";
+import { askSchema, FakeD1 } from "../ask/testing/fake-d1.js";
 import { appendTurn, askTopicCounts, askOutcomeCounts } from "../ask/store.js";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

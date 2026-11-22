@@ -1,6 +1,6 @@
 /**
  * Ask: an optional chat endpoint (`/ask`) that answers visitors from the MCP's own
- * public tools through a model on OpenRouter. Switched on by an `ask` block in
+ * public tools through a model on OpenRouter or Anthropic's API. Switched on by an `ask` block in
  * `mcp.config.ts`; a clone without it serves no Ask routes (404).
  */
 
@@ -34,13 +34,36 @@ export interface AskLimits {
   perIpPerMinute?: number;
   /** Soft daily spend cap in USD across all conversations (default 3). */
   dailyBudgetUsd?: number;
+  /** Questions per visitor per Vietnam day, counted by a signed visitor id (`x-ask-visitor`). No limit when omitted. */
+  questionsPerVisitorPerDay?: number;
+  /** Questions per IP per Vietnam day, a ceiling above the visitor limit for visitors who drop their id. No limit when omitted. */
+  questionsPerIpPerDay?: number;
 }
 
+/** Prices in USD per million tokens, for a provider that doesn't report cost (Anthropic). */
+export interface AskPricing {
+  inputPerMTok: number;
+  outputPerMTok: number;
+  /** Defaults to `inputPerMTok`. */
+  cacheReadPerMTok?: number;
+  /** Defaults to 1.25 x `inputPerMTok`. */
+  cacheWritePerMTok?: number;
+}
+
+export type AskProvider = "openrouter" | "anthropic";
+export type AskEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
 export interface AskConfig {
-  /** OpenRouter model id. */
+  /** Where model calls go (default "openrouter"). "anthropic" needs the `ANTHROPIC_API_KEY` secret. */
+  provider?: AskProvider;
+  /** Model id on the provider (OpenRouter's "vendor/model", or Anthropic's "claude-haiku-5-5"). */
   model: string;
-  /** OpenRouter `models` fallback list, tried in order when `model` fails. */
+  /** OpenRouter `models` fallback list, tried in order when `model` fails. OpenRouter only. */
   fallbackModels?: string[];
+  /** Prices per model id, for Anthropic models not in the kit's table (`ANTHROPIC_PRICES` in `kit/ask/model.ts`). */
+  pricing?: Record<string, AskPricing>;
+  /** Anthropic only: the effort level sent with each call (the model's default when omitted). */
+  effort?: AskEffort;
   /** Model for /ask/summary and topic labels; defaults to `model`. */
   summaryModel?: string;
   /** The client's own text (brand voice, facts), appended to the kit's behaviour rules. */
@@ -72,7 +95,11 @@ export const ASK_DEFAULTS = {
   dailyBudgetUsd: 3,
 } as const;
 
-export type ResolvedAskLimits = Required<AskLimits>;
+export type ResolvedAskLimits = Required<Omit<AskLimits, "questionsPerVisitorPerDay" | "questionsPerIpPerDay">> & {
+  /** null: no daily limit. */
+  questionsPerVisitorPerDay: number | null;
+  questionsPerIpPerDay: number | null;
+};
 
 /** The limits with defaults filled in. */
 export function askLimits(ask: AskConfig): ResolvedAskLimits {
@@ -84,6 +111,8 @@ export function askLimits(ask: AskConfig): ResolvedAskLimits {
     maxToolSteps: l.maxToolSteps ?? ASK_DEFAULTS.maxToolSteps,
     perIpPerMinute: l.perIpPerMinute ?? ASK_DEFAULTS.perIpPerMinute,
     dailyBudgetUsd: l.dailyBudgetUsd ?? ASK_DEFAULTS.dailyBudgetUsd,
+    questionsPerVisitorPerDay: l.questionsPerVisitorPerDay ?? null,
+    questionsPerIpPerDay: l.questionsPerIpPerDay ?? null,
   };
 }
 
@@ -92,12 +121,38 @@ export function askTopics(ask: AskConfig): string[] {
   return ask.topics.includes("other") ? [...ask.topics] : [...ask.topics, "other"];
 }
 
+/** Model ids priced in the kit (`ANTHROPIC_PRICES` in `kit/ask/model.ts`; a test keeps the two in step). */
+export const KNOWN_ANTHROPIC_MODELS: readonly string[] = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"];
+
 const LOCAL_ORIGIN_RE = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?$/;
 const HTTPS_ORIGIN_RE = /^https:\/\/[a-z0-9.-]+(:\d{1,5})?$/;
 
 /** Throws with a message naming the problem. Called by `defineConfig`. */
 export function validateAskConfig(ask: AskConfig): void {
   if (typeof ask.model !== "string" || ask.model.trim() === "") throw new Error("ask.model must be a non-empty string");
+  const provider = ask.provider ?? "openrouter";
+  if (provider !== "openrouter" && provider !== "anthropic") throw new Error(`ask.provider: unknown provider "${String(provider)}"`);
+  for (const [id, p] of Object.entries(ask.pricing ?? {})) {
+    for (const [k, v] of Object.entries(p ?? {})) {
+      if (!(typeof v === "number" && Number.isFinite(v) && v >= 0)) throw new Error(`ask.pricing["${id}"].${k} must be a number >= 0`);
+    }
+    if (typeof p?.inputPerMTok !== "number" || typeof p?.outputPerMTok !== "number") {
+      throw new Error(`ask.pricing["${id}"] needs inputPerMTok and outputPerMTok`);
+    }
+  }
+  if (ask.effort !== undefined) {
+    if (provider !== "anthropic") throw new Error("ask.effort is for provider \"anthropic\" only");
+    if (!["low", "medium", "high", "xhigh", "max"].includes(ask.effort)) throw new Error(`ask.effort: unknown level "${ask.effort}"`);
+  }
+  if (provider === "anthropic") {
+    if (ask.fallbackModels?.length) throw new Error("ask.fallbackModels is OpenRouter only; remove it for provider \"anthropic\"");
+    // Without a price the daily budget would count this model's spend as 0.
+    for (const id of new Set([ask.model, ask.summaryModel ?? ask.model])) {
+      if (!ask.pricing?.[id] && !KNOWN_ANTHROPIC_MODELS.includes(id)) {
+        throw new Error(`ask.pricing: no price for Anthropic model "${id}"; add it to ask.pricing`);
+      }
+    }
+  }
   for (const m of ask.fallbackModels ?? []) {
     if (typeof m !== "string" || m.trim() === "") throw new Error("ask.fallbackModels entries must be non-empty strings");
   }

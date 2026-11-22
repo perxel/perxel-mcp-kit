@@ -415,14 +415,18 @@ pnpm kit:update [ref] [--from <local path>]
 ## Ask (optional on-site chat)
 
 Ask answers a website's visitors from the MCP's own **public** tools, called
-in process (not over MCP), through a model on OpenRouter (AI SDK). Add an
+in process (not over MCP), through a model on OpenRouter or Anthropic's API
+directly (AI SDK). Add an
 `ask` block to `mcp.config.ts` to switch it on; without one, none of the
 routes below exist (404).
 
 ```ts
 ask: {
-  model: "<openrouter model id>",
-  fallbackModels: ["<another id>"],            // optional
+  provider: "openrouter",                      // or "anthropic" (ANTHROPIC_API_KEY); default "openrouter"
+  model: "<openrouter model id>",              // with "anthropic": e.g. "claude-haiku-5-5"
+  fallbackModels: ["<another id>"],            // optional, OpenRouter only
+  effort: "low",                               // optional, Anthropic only: the model's effort level
+  pricing: { "<id>": { inputPerMTok: 1, outputPerMTok: 5 } }, // optional: Anthropic models the kit doesn't price
   summaryModel: "<cheaper id>",                // optional: summaries, topic labels
   systemPrompt: { vi: "…", en: "…" },          // the client's facts and voice; appended to the kit's rules (kit/ask/prompt.ts)
   allowedOrigins: ["https://example.com"],     // exact origins; localhost only in local dev
@@ -431,9 +435,28 @@ ask: {
   retentionDays: 90,                           // conversation text deleted after this
   sessionHours: 24,                            // x-ask-session life after the last answer; then Turnstile again, same conversation
   actions: ["lead", "subscribe"],              // optional: prepare_lead / prepare_subscribe (below)
-  limits: { messagesPerConversation: 20, maxInputChars: 1000, maxOutputTokens: 700, maxToolSteps: 4, perIpPerMinute: 6, dailyBudgetUsd: 3 },
+  limits: { messagesPerConversation: 20, maxInputChars: 1000, maxOutputTokens: 700, maxToolSteps: 4, perIpPerMinute: 6, dailyBudgetUsd: 3,
+            questionsPerVisitorPerDay: 5, questionsPerIpPerDay: 20 }, // the last two: no limit when omitted
 }
 ```
+
+**Provider and cost.** OpenRouter reports each call's cost. Anthropic doesn't,
+so with `provider: "anthropic"` the kit prices the token usage from its table
+(`ANTHROPIC_PRICES` in `kit/ask/model.ts`: Haiku 5.5, Sonnet 5.5, Opus 5.5) or
+from `pricing`; a model in neither fails config validation, so the daily
+budget never counts its spend as 0. The table changes with kit releases.
+
+**Daily question limit** (optional). `questionsPerVisitorPerDay` counts
+answered questions per visitor per Vietnam day; `questionsPerIpPerDay` is a
+ceiling per IP (the hashed caller key) for visitors who drop their id. The
+visitor id is issued by the Worker, signed with `ASK_SESSION_SECRET`, and
+returned on every turn as `x-ask-visitor`: the website keeps it (e.g. in
+`localStorage`) and sends it back on every request. A missing or forged one
+gets a new id. Answered turns carry `x-ask-remaining` (the smaller of the
+two counts left) when a limit is set; past a limit the reply is 429
+`{ code: "quota", scope: "visitor" | "ip", limit }` with `Retry-After` to
+Vietnam midnight. Counts live in D1 (`ask_quota`, migration `0002`); the cron
+deletes days before yesterday.
 
 | Path | What |
 |---|---|
@@ -457,28 +480,31 @@ question without it fails if any action is called.
 
 Checks are judged in this order: origin → body → session or Turnstile →
 per-IP limit (`ASK_RATE_LIMITER`) → conversation cap (D1) → daily budget (D1
-spend, cached 60 s) → model. Origin and body come first; Turnstile, the
+spend, cached 60 s) → daily question limit (one D1 write, after every other
+check so a refused request doesn't use a question) → model. Origin and body come first; Turnstile, the
 limiter and the D1 reads then run together (the conversation, its messages
 and the spend in one D1 `batch`), so a turn waits for the slowest of them
 instead of their sum. Cost of that: a request with a bad Turnstile token
 still makes one D1 read and counts against the rate limit. Errors are JSON `{ code }`: `origin`, `bad_request`,
 `verify_failed`, `session_expired`, `rate_limited`, `conversation_limit`,
-`budget`, `upstream`. Only the last user message is read from the request;
+`budget`, `quota`, `upstream`. Only the last user message is read from the request;
 the history comes from D1, so a client can't write the assistant's turns.
 
 Privacy: every visitor message is stripped of emails, phone numbers and long
 numbers (`kit/ask/redact.ts`) before it is stored; the raw text goes to the
 model only. A daily cron labels idle conversations with a topic and deletes
 message text after `retentionDays` (the conversation row, with no visitor
-text, stays). OpenRouter requests use `provider.data_collection: "deny"`.
+text, stays). OpenRouter requests use `provider.data_collection: "deny"`;
+Anthropic's API doesn't train on API inputs by default.
 
 Bindings and secrets (all created by `pnpm setup:cloudflare` when the config
 has `ask`): D1 `ASK_DB` (migrations in `kit/ask/migrations`), rate limiter
 `ASK_RATE_LIMITER`, a cron trigger, the Access app on
 `<host>/dash/conversations` (`ASK_DASH_ACCESS_AUD`), a Turnstile widget for
 the allowed origins (its site key goes in the website), and the secrets
-`OPENROUTER_API_KEY` (prompted, never written to disk; set a credit limit on
-the key in OpenRouter first), `TURNSTILE_SECRET`, `ASK_SESSION_SECRET`.
+`OPENROUTER_API_KEY` or, with `provider: "anthropic"`, `ANTHROPIC_API_KEY`
+(prompted, never written to disk; set a credit or spend limit on it first),
+`TURNSTILE_SECRET`, `ASK_SESSION_SECRET`.
 
 Local dev: run `wrangler dev` with Cloudflare's Turnstile test secret
 `1x0000000000000000000000000000000AA` in `.dev.vars`, then

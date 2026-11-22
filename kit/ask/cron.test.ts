@@ -1,11 +1,10 @@
-import { readFileSync } from "node:fs";
 import { MockLanguageModelV4 } from "ai/test";
 import { describe, expect, it } from "vitest";
 import type { McpConfig } from "../core/config.js";
 import type { Env } from "../core/env.js";
 import { normalizeTopic, runAskCron } from "./cron.js";
-import { appendTurn, getConversation, getMessages } from "./store.js";
-import { FakeD1 } from "./testing/fake-d1.js";
+import { appendTurn, countQuestion, getConversation, getMessages } from "./store.js";
+import { askSchema, FakeD1 } from "./testing/fake-d1.js";
 
 const config: McpConfig = {
   slug: "example",
@@ -56,7 +55,7 @@ describe("ask cron", () => {
   });
 
   it("labels idle conversations and clears old text", async () => {
-    const db = new FakeD1(readFileSync("kit/ask/migrations/0001_init.sql", "utf8")) as unknown as D1Database;
+    const db = new FakeD1(askSchema()) as unknown as D1Database;
     const now = 200 * DAY;
     await seed(db, "old", now - 100 * DAY);
     await seed(db, "idle", now - 2 * 60 * 60 * 1000);
@@ -70,6 +69,23 @@ describe("ask cron", () => {
     expect(old?.caller_key).toBeNull();
     expect(old?.text_deleted_at).toBe(now);
     expect(await getMessages(db, "old")).toEqual([]);
+  });
+
+  it("keeps today's and yesterday's question counts, deletes older ones", async () => {
+    const db = new FakeD1(askSchema()) as unknown as D1Database;
+    const now = Date.parse("2026-11-22T05:00:00Z"); // 12:00 in Vietnam
+    for (const day of ["2026-11-20", "2026-11-21", "2026-11-22"]) await countQuestion(db, day, ["v:a"]);
+    await runAskCron(config, { ASK_DB: db } as unknown as Env, { now: () => now });
+    const rows = await db.prepare("SELECT day FROM ask_quota ORDER BY day").all<{ day: string }>();
+    expect(rows.results.map((r) => r.day)).toEqual(["2026-11-21", "2026-11-22"]);
+  });
+
+  it("counts questions per subject and day, atomically per row", async () => {
+    const db = new FakeD1(askSchema()) as unknown as D1Database;
+    expect(await countQuestion(db, "2026-11-22", ["v:a", "ip:x"])).toEqual([1, 1]);
+    expect(await countQuestion(db, "2026-11-22", ["v:a", "ip:x"])).toEqual([2, 2]);
+    expect(await countQuestion(db, "2026-11-23", ["v:a"])).toEqual([1]);
+    expect(await countQuestion(db, "2026-11-23", [])).toEqual([]);
   });
 
   it("does nothing without an ask block or a database", async () => {

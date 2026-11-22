@@ -1,4 +1,3 @@
-import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
@@ -21,8 +20,9 @@ import { allowedOrigin, preflight, withCors } from "./cors.js";
 import { cloudflareAskLogger, type AskLogger } from "./logger.js";
 import { askInstructions, summaryInstructions } from "./prompt.js";
 import { redact } from "./redact.js";
-import { issueSession, verifySession } from "./session.js";
-import { addCost, getConversation, getMessages, loadTurnState, markLeadSent, todayCostUsd } from "./store.js";
+import { askModel, askProviderOptions, hasProviderKey, openRouterModel, providerKeyName, stepsCost } from "./model.js";
+import { issueSession, issueVisitor, verifySession, verifyVisitor } from "./session.js";
+import { addCost, countQuestion, getConversation, getMessages, loadTurnState, markLeadSent, todayCostUsd } from "./store.js";
 import { buildAskTools, HANDOFF_TOOL, UI_TOOLS, type AskToolRun } from "./tools.js";
 import { verifyTurnstile } from "./turnstile.js";
 
@@ -30,7 +30,7 @@ import { verifyTurnstile } from "./turnstile.js";
  * `/ask` and its sub-routes, mounted by `createWorker` only when `config.ask` is set.
  * Checks are judged in this order (contract in the kit README, "Ask"):
  * origin → method/size → session or Turnstile → per-IP rate limit → conversation
- * caps → daily budget → model call. Turnstile, the limiter and the D1 reads run
+ * caps → daily budget → daily question limit → model call. Turnstile, the limiter and the D1 reads run
  * together; only origin and body come first. Only the last user message is taken from the
  * request; history comes from D1, so a client cannot inject assistant turns.
  */
@@ -43,6 +43,7 @@ export type AskErrorCode =
   | "rate_limited"
   | "conversation_limit"
   | "budget"
+  | "quota"
   | "upstream";
 
 const STATUS: Record<AskErrorCode, number> = {
@@ -53,6 +54,7 @@ const STATUS: Record<AskErrorCode, number> = {
   rate_limited: 429,
   conversation_limit: 429,
   budget: 503,
+  quota: 429,
   upstream: 502,
 };
 
@@ -62,26 +64,18 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const SUMMARY_GAP_MS = 5 * 60 * 1000;
 const BUDGET_CACHE_MS = 60 * 1000;
 
+export { openRouterModel };
+
 export interface AskDeps {
-  /** The model for an OpenRouter id; tests pass a mock. */
+  /** The model for an id on the configured provider; tests pass a mock. */
   modelFor?: (id: string, ask: AskConfig, env: Env) => LanguageModel;
   fetcher?: typeof fetch;
   now?: () => number;
   logger?: AskLogger;
 }
 
-/** OpenRouter with the plan's settings: no providers that store prompts, cost in usage, fallbacks. */
-export function openRouterModel(id: string, ask: AskConfig, env: Env): LanguageModel {
-  const openrouter = createOpenRouter({ apiKey: env.OPENROUTER_API_KEY as string });
-  return openrouter(id, {
-    ...(ask.fallbackModels?.length ? { models: ask.fallbackModels } : {}),
-    usage: { include: true },
-    provider: { data_collection: "deny" },
-  });
-}
-
-function errorResponse(code: AskErrorCode, origin: string | null, extra?: HeadersInit): Response {
-  const res = Response.json({ code }, { status: STATUS[code], headers: extra });
+function errorResponse(code: AskErrorCode, origin: string | null, extra?: HeadersInit, fields?: Record<string, unknown>): Response {
+  const res = Response.json({ code, ...fields }, { status: STATUS[code], headers: extra });
   return origin ? withCors(res, origin) : res;
 }
 
@@ -170,15 +164,6 @@ function parseAskBody(raw: unknown, maxInputChars: number): AskBody | null {
   };
 }
 
-function stepCost(steps: readonly { providerMetadata?: unknown }[]): number {
-  let usd = 0;
-  for (const s of steps) {
-    const cost = (s.providerMetadata as { openrouter?: { usage?: { cost?: unknown } } } | undefined)?.openrouter?.usage?.cost;
-    if (typeof cost === "number" && Number.isFinite(cost)) usd += cost;
-  }
-  return usd;
-}
-
 interface StepPerf {
   performance?: { stepTimeMs?: number; timeToFirstOutputMs?: number; toolExecutionMs?: Readonly<Record<string, number>> };
   toolCalls?: readonly { toolName: string }[];
@@ -238,7 +223,7 @@ export async function handleAsk(
   if (!origin) return errorResponse("origin", null, { vary: "Origin" });
 
   const callerKey = (await ipCallerKey(env.IP_HASH_SALT, ip).catch(() => null)) ?? "";
-  const refuse = (code: AskErrorCode, headers?: HeadersInit): Response => {
+  const refuse = (code: AskErrorCode, headers?: HeadersInit, fields?: Record<string, unknown>): Response => {
     const row: AskTurnRow = {
       callerKey,
       slug: config.slug,
@@ -252,7 +237,7 @@ export async function handleAsk(
     };
     logger.refusal(row);
     log("ask.refused", { path, code });
-    return errorResponse(code, origin, headers);
+    return errorResponse(code, origin, headers, fields);
   };
 
   // 2. Method and size.
@@ -322,14 +307,39 @@ export async function handleAsk(
 
   // 6. Daily budget.
   if (spent >= limits.dailyBudgetUsd) return refuse("budget");
-  if (!env.OPENROUTER_API_KEY && !deps.modelFor) {
-    log("ask.misconfigured", { missing: "OPENROUTER_API_KEY" });
+  if (!hasProviderKey(ask, env) && !deps.modelFor) {
+    log("ask.misconfigured", { missing: providerKeyName(ask) });
     return refuse("upstream");
   }
 
-  // 7. The model call.
+  // 7. Daily question limit, per visitor and per IP. The visitor id comes from the
+  // signed `x-ask-visitor` header; a missing or forged one gets a fresh id (the turn has
+  // passed Turnstile or carries a session). Counted here, after every other check, so a
+  // refused request doesn't use up a question; a failed model call still counts.
+  let visitorId = await verifyVisitor(secret, request.headers.get("x-ask-visitor"));
+  const visitorToken = visitorId ? request.headers.get("x-ask-visitor")! : await issueVisitor(secret);
+  visitorId ??= visitorToken.slice(0, visitorToken.indexOf("."));
+  const quotaHeaders: Record<string, string> = { "x-ask-visitor": visitorToken };
+  const checks: { scope: "visitor" | "ip"; subject: string; limit: number }[] = [];
+  if (limits.questionsPerVisitorPerDay !== null) {
+    checks.push({ scope: "visitor", subject: `v:${visitorId}`, limit: limits.questionsPerVisitorPerDay });
+  }
+  if (limits.questionsPerIpPerDay !== null && callerKey) {
+    checks.push({ scope: "ip", subject: `ip:${callerKey}`, limit: limits.questionsPerIpPerDay });
+  }
+  if (checks.length > 0) {
+    const counts = await countQuestion(db, day, checks.map((c) => c.subject));
+    const over = checks.find((c, i) => counts[i]! > c.limit);
+    if (over) {
+      const retryAfter = String(Math.max(1, Math.ceil((vietnamDayStart(now()) + 86_400_000 - now()) / 1000)));
+      return refuse("quota", { ...quotaHeaders, "Retry-After": retryAfter }, { scope: over.scope, limit: over.limit });
+    }
+    quotaHeaders["x-ask-remaining"] = String(Math.min(...checks.map((c, i) => c.limit - counts[i]!)));
+  }
+
+  // 8. The model call.
   const history: ModelMessage[] = existing ? state.messages.map((m) => ({ role: m.role, content: m.text }) as ModelMessage) : [];
-  const model = (deps.modelFor ?? openRouterModel)(ask.model, ask, env);
+  const model = (deps.modelFor ?? askModel)(ask.model, ask, env);
   const runs: AskToolRun[] = [];
   const cited: string[] = [];
   const toolCtx: ToolContext = { env, auth: null, requestId: crypto.randomUUID(), log };
@@ -373,6 +383,7 @@ export async function handleAsk(
       const result = streamText({
         model,
         instructions: askInstructions(ask, body.locale),
+        ...(askProviderOptions(ask) ? { providerOptions: askProviderOptions(ask) } : {}),
         messages: [...history, { role: "user", content: userText }],
         tools,
         stopWhen: isStepCount(limits.maxToolSteps),
@@ -382,7 +393,7 @@ export async function handleAsk(
           if (firstTextMs < 0 && chunk.type === "text-delta") firstTextMs = now() - t0;
         },
         onEnd: (event) => {
-          const costUsd = stepCost(event.steps);
+          const costUsd = stepsCost(ask, ask.model, event.steps);
           const timing = stepTiming(event.steps as readonly StepPerf[]);
           const latencyMs = now() - t0;
           noteSpend(costUsd);
@@ -436,7 +447,7 @@ export async function handleAsk(
   });
 
   const token = await issueSession(secret, body.id, now(), (ask.sessionHours ?? ASK_DEFAULTS.sessionHours) * 3_600_000);
-  return withCors(createUIMessageStreamResponse({ stream, headers: { "x-ask-session": token } }), origin);
+  return withCors(createUIMessageStreamResponse({ stream, headers: { "x-ask-session": token, ...quotaHeaders } }), origin);
 }
 
 interface SideCtx {
@@ -478,7 +489,7 @@ async function handleSideRoute(
   const last = lastSummary.get(id);
   if (last !== undefined && now() - last < SUMMARY_GAP_MS) return refuse("rate_limited", { "Retry-After": "300" });
   if ((await spentToday(db, now())) >= askLimits(ask).dailyBudgetUsd) return refuse("budget");
-  if (!env.OPENROUTER_API_KEY && !deps.modelFor) return refuse("upstream");
+  if (!hasProviderKey(ask, env) && !deps.modelFor) return refuse("upstream");
   lastSummary.set(id, now());
 
   const messages = await getMessages(db, id);
@@ -486,13 +497,14 @@ async function handleSideRoute(
   const transcript = messages.map((m) => `${m.role === "user" ? "Visitor" : "Assistant"}: ${m.text}`).join("\n");
   try {
     const result = await generateText({
-      model: (deps.modelFor ?? openRouterModel)(ask.summaryModel ?? ask.model, ask, env),
+      model: (deps.modelFor ?? askModel)(ask.summaryModel ?? ask.model, ask, env),
       instructions: summaryInstructions(locale),
+      ...(askProviderOptions(ask) ? { providerOptions: askProviderOptions(ask) } : {}),
       prompt: transcript,
       maxOutputTokens: 200,
       maxRetries: 1,
     });
-    const costUsd = stepCost(result.steps);
+    const costUsd = stepsCost(ask, ask.summaryModel ?? ask.model, result.steps);
     noteSpend(costUsd);
     await addCost(db, id, costUsd).catch(() => undefined);
     return withCors(Response.json({ summary: result.text.trim() }), origin);

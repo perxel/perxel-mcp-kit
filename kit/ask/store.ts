@@ -297,3 +297,26 @@ export async function askOutcomeCounts(db: D1Database, sinceMs: number): Promise
     .first<OutcomeCounts>();
   return res ?? { answered: 0, handedOff: 0, leads: 0 };
 }
+
+/**
+ * Counts one question for each subject on `day` and returns the new counts, in order,
+ * in one D1 round trip. Atomic per row (upsert), so concurrent turns can't both slip
+ * under a limit.
+ */
+export async function countQuestion(db: D1Database, day: string, subjects: string[]): Promise<number[]> {
+  if (subjects.length === 0) return [];
+  const stmts = subjects.map((subject) =>
+    db
+      .prepare(
+        "INSERT INTO ask_quota (day, subject, count) VALUES (?, ?, 1) ON CONFLICT (day, subject) DO UPDATE SET count = count + 1 RETURNING count",
+      )
+      .bind(day, subject),
+  );
+  const results = await db.batch<{ count: number }>(stmts);
+  return results.map((r) => Number(r.results[0]?.count ?? 0));
+}
+
+/** Deletes question counts for days before `keepFromDay` (YYYY-MM-DD). */
+export async function pruneQuota(db: D1Database, keepFromDay: string): Promise<void> {
+  await db.prepare("DELETE FROM ask_quota WHERE day < ?").bind(keepFromDay).run();
+}

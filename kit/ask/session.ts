@@ -69,3 +69,28 @@ export async function verifySession(
   // Expiry is checked after the signature so a forged token never reads as "expired".
   return Number(expiryRaw) > now ? "ok" : "expired";
 }
+
+/**
+ * Visitor ids for the daily question limit: `<uuid>.<base64url HMAC-SHA256(secret, "visitor.<uuid>")>`.
+ * Issued by the Worker (never chosen by the client), kept by the website and sent back as
+ * `x-ask-visitor`. No expiry: the count resets each Vietnam day. A visitor who drops it gets
+ * a new one after the next Turnstile check, which the per-IP daily limit bounds.
+ */
+const VISITOR_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export async function issueVisitor(secret: string, id: string = crypto.randomUUID()): Promise<string> {
+  const sig = await crypto.subtle.sign("HMAC", await hmacKey(secret), encoder.encode(`visitor.${id}`));
+  return `${id}.${toBase64Url(new Uint8Array(sig))}`;
+}
+
+/** The visitor id in a valid token, else null. */
+export async function verifyVisitor(secret: string | undefined, token: string | null | undefined): Promise<string | null> {
+  if (!token || !secret || token.length > 120) return null;
+  const dot = token.indexOf(".");
+  const id = token.slice(0, dot);
+  if (dot <= 0 || !VISITOR_RE.test(id)) return null;
+  const sig = fromBase64Url(token.slice(dot + 1));
+  if (!sig || sig.length !== 32) return null;
+  const ok = await crypto.subtle.verify("HMAC", await hmacKey(secret), sig, encoder.encode(`visitor.${id}`));
+  return ok ? id : null;
+}

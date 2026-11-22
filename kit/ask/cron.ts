@@ -2,9 +2,11 @@ import { generateText } from "ai";
 import type { McpConfig } from "../core/config.js";
 import type { Env } from "../core/env.js";
 import { askTopics, ASK_DEFAULTS } from "./config.js";
-import { openRouterModel, type AskDeps } from "./handler.js";
+import { type AskDeps } from "./handler.js";
+import { askModel, askProviderOptions, hasProviderKey, stepsCost } from "./model.js";
 import { topicInstructions } from "./prompt.js";
-import { addCost, applyRetention, getMessages, idleWithoutTopic, setTopic } from "./store.js";
+import { addCost, applyRetention, getMessages, idleWithoutTopic, pruneQuota, setTopic } from "./store.js";
+import { vietnamDate } from "../core/date.js";
 
 export const TOPIC_BATCH = 50;
 export const IDLE_MS = 60 * 60 * 1000;
@@ -33,8 +35,9 @@ export async function runAskCron(
   const topics = askTopics(ask);
   let labelled = 0;
 
-  if (env.OPENROUTER_API_KEY || deps.modelFor) {
-    const model = (deps.modelFor ?? openRouterModel)(ask.summaryModel ?? ask.model, ask, env);
+  if (hasProviderKey(ask, env) || deps.modelFor) {
+    const modelId = ask.summaryModel ?? ask.model;
+    const model = (deps.modelFor ?? askModel)(modelId, ask, env);
     for (const convo of await idleWithoutTopic(db, now - IDLE_MS, TOPIC_BATCH)) {
       const visitor = (await getMessages(db, convo.id)).filter((m) => m.role === "user").map((m) => m.text);
       try {
@@ -44,11 +47,11 @@ export async function runAskCron(
           prompt: visitor.join("\n"),
           maxOutputTokens: 10,
           maxRetries: 1,
+          ...(askProviderOptions(ask) ? { providerOptions: askProviderOptions(ask) } : {}),
         });
         await setTopic(db, convo.id, normalizeTopic(result.text, topics));
-        const cost = (result.providerMetadata as { openrouter?: { usage?: { cost?: number } } } | undefined)?.openrouter
-          ?.usage?.cost;
-        if (typeof cost === "number") await addCost(db, convo.id, cost);
+        const cost = stepsCost(ask, modelId, result.steps);
+        if (cost > 0) await addCost(db, convo.id, cost);
         labelled++;
       } catch (err) {
         log("ask.topic_error", { message: err instanceof Error ? err.message : String(err) });
@@ -57,6 +60,10 @@ export async function runAskCron(
   }
 
   const cleared = await applyRetention(db, ask.retentionDays ?? ASK_DEFAULTS.retentionDays, now);
+  // Question counts are only read for today; keep yesterday's for a look in D1.
+  await pruneQuota(db, vietnamDate(new Date(now - 86_400_000))).catch((err: unknown) =>
+    log("ask.quota_prune_error", { message: err instanceof Error ? err.message : String(err) }),
+  );
   log("ask.cron", { labelled, cleared });
   return { labelled, cleared };
 }

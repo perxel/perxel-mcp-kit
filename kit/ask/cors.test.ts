@@ -57,7 +57,7 @@ describe("preflight", () => {
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-origin")).toBe("https://perxel.com");
     expect(res.headers.get("access-control-allow-methods")).toBe("POST");
-    expect(res.headers.get("access-control-allow-headers")).toBe("content-type, x-ask-session");
+    expect(res.headers.get("access-control-allow-headers")).toBe("content-type, x-ask-session, x-ask-visitor");
     expect(res.headers.get("access-control-max-age")).toBe("600");
     expect(res.headers.get("vary")).toBe("Origin");
   });
@@ -83,7 +83,7 @@ describe("withCors", () => {
     const out = withCors(new Response("hello", { status: 201, headers: { "content-type": "text/plain" } }), "https://perxel.com");
     expect(out.status).toBe(201);
     expect(out.headers.get("access-control-allow-origin")).toBe("https://perxel.com");
-    expect(out.headers.get("access-control-expose-headers")).toBe("x-ask-session");
+    expect(out.headers.get("access-control-expose-headers")).toBe("x-ask-session, x-ask-visitor, x-ask-remaining");
     expect(out.headers.get("vary")).toBe("Origin");
     expect(out.headers.get("content-type")).toBe("text/plain");
     return out.text().then((t) => expect(t).toBe("hello"));

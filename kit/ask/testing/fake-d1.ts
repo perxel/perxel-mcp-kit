@@ -6,7 +6,18 @@
  *
  * Test-only. Production code paths never import this file.
  */
+import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+
+/** Every Ask migration in order, as one SQL script (run from the repo root, like vitest). */
+export function askSchema(): string {
+  const dir = "kit/ask/migrations";
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .sort()
+    .map((f) => readFileSync(`${dir}/${f}`, "utf8"))
+    .join("\n");
+}
 
 export interface FakeD1Result<T = Record<string, unknown>> {
   results: T[];

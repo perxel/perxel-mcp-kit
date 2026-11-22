@@ -196,7 +196,7 @@ export interface SetupOptions {
   log: (msg: string) => void;
   fetchImpl?: typeof fetch;
   /** Set when the clone's mcp.config.ts has an `ask` block. */
-  ask?: { allowedOrigins: string[]; perIpPerMinute: number };
+  ask?: { allowedOrigins: string[]; perIpPerMinute: number; provider?: "openrouter" | "anthropic" };
   /** Reads a secret from the terminal without echo (CLI); absent in tests. */
   promptSecret?: (label: string) => Promise<string>;
 }
@@ -493,10 +493,12 @@ export async function runSetup(o: SetupOptions): Promise<void> {
     log(`  Turnstile site key for the website: ${widget.sitekey}`);
     if (widgetSecret) await put("TURNSTILE_SECRET", widgetSecret);
     if (!have.has("ASK_SESSION_SECRET")) await put("ASK_SESSION_SECRET", rand());
-    if (!have.has("OPENROUTER_API_KEY")) {
-      const key = process.env["OPENROUTER_API_KEY"] || (o.promptSecret && !o.dryRun ? await o.promptSecret("OpenRouter API key (set a credit limit on it first)") : "");
-      if (key) await put("OPENROUTER_API_KEY", key);
-      else log("  OPENROUTER_API_KEY not set: run `pnpm exec wrangler secret put OPENROUTER_API_KEY -c wrangler.mcp.jsonc`");
+    const keyName = o.ask.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENROUTER_API_KEY";
+    const keyLabel = o.ask.provider === "anthropic" ? "Anthropic API key (set a spend limit on its workspace first)" : "OpenRouter API key (set a credit limit on it first)";
+    if (!have.has(keyName)) {
+      const key = process.env[keyName] || (o.promptSecret && !o.dryRun ? await o.promptSecret(keyLabel) : "");
+      if (key) await put(keyName, key);
+      else log(`  ${keyName} not set: run \`pnpm exec wrangler secret put ${keyName} -c wrangler.mcp.jsonc\``);
     }
     await act("apply the Ask D1 migrations", () => wrangler.run(["d1", "migrations", "apply", "ASK_DB", "--remote", "-c", "wrangler.mcp.jsonc"]), "");
   }
@@ -593,9 +595,9 @@ export function promptHidden(label: string): Promise<string> {
 async function readAskConfig(root: string): Promise<SetupOptions["ask"]> {
   const path = join(root, "mcp.config.ts");
   if (!existsSync(path)) return undefined;
-  const mod = (await import(pathToFileURL(path).href)) as { default?: { ask?: { allowedOrigins: string[]; limits?: { perIpPerMinute?: number } } } };
+  const mod = (await import(pathToFileURL(path).href)) as { default?: { ask?: { allowedOrigins: string[]; provider?: "openrouter" | "anthropic"; limits?: { perIpPerMinute?: number } } } };
   const ask = mod.default?.ask;
-  return ask ? { allowedOrigins: ask.allowedOrigins, perIpPerMinute: ask.limits?.perIpPerMinute ?? 6 } : undefined;
+  return ask ? { allowedOrigins: ask.allowedOrigins, perIpPerMinute: ask.limits?.perIpPerMinute ?? 6, ...(ask.provider ? { provider: ask.provider } : {}) } : undefined;
 }
 
 export function realWrangler(root: string, env: NodeJS.ProcessEnv): Wrangler {
