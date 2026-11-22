@@ -231,3 +231,94 @@ describe("static source", () => {
     expect(fetchCalls).toHaveLength(1);
   });
 });
+
+/** A fake R2 bucket holding one object; honours If-None-Match like R2's onlyIf. */
+function fakeR2(initial?: { body: string; etag: string }) {
+  let obj = initial;
+  const gets: { key: string; ifNoneMatch: string | null }[] = [];
+  const bucket = {
+    get: async (key: string, opts?: { onlyIf?: Headers }) => {
+      const ifNoneMatch = opts?.onlyIf?.get("If-None-Match") ?? null;
+      gets.push({ key, ifNoneMatch });
+      if (!obj) return null;
+      const httpEtag = `"${obj.etag}"`;
+      if (ifNoneMatch === httpEtag) return { key, httpEtag }; // R2Object without a body
+      const body = obj.body;
+      return { key, httpEtag, body: new Response(body).body, text: async () => body };
+    },
+  } as unknown as R2Bucket;
+  return { bucket, gets, set: (o?: { body: string; etag: string }) => (obj = o) };
+}
+
+describe("static source from R2", () => {
+  const r2Env = (kv: KVNamespace, bucket?: R2Bucket) => ({ CONTENT_KV: kv, CATALOG: bucket }) as unknown as Env;
+  const make = (maxAgeMs = 600_000) =>
+    createStaticSource<Doc>({
+      name: "catalog",
+      r2: { bucket: (env) => env.CATALOG as R2Bucket | undefined, key: "catalog.json" },
+      kvKey: "catalog",
+      maxAgeMs,
+      parse: (j) => Doc.parse(j),
+    });
+
+  it("needs exactly one of url and r2", () => {
+    expect(() => createStaticSource<Doc>({ name: "c", kvKey: "k", parse: (j) => Doc.parse(j) })).toThrow();
+    expect(() =>
+      createStaticSource<Doc>({ name: "c", url: () => "https://x", r2: { bucket: () => undefined, key: "k" }, kvKey: "k", parse: (j) => Doc.parse(j) }),
+    ).toThrow();
+  });
+
+  it("loads from the bucket, writes KV, and reports fetch", async () => {
+    const { puts, kv } = fakeKv();
+    const r2 = fakeR2({ body: BODY, etag: "a" });
+    const src = make();
+    const data = await src.get(r2Env(kv, r2.bucket));
+    expect(data.items).toHaveLength(2);
+    expect(src.status()).toMatchObject({ from: "fetch", etag: '"a"', items: 2 });
+    expect(r2.gets[0]).toEqual({ key: "catalog.json", ifNoneMatch: null });
+    expect(puts).toHaveLength(1);
+  });
+
+  it("revalidates with the ETag; a match keeps memory without a KV write", async () => {
+    const { puts, kv } = fakeKv();
+    const r2 = fakeR2({ body: BODY, etag: "a" });
+    const src = make(0);
+    await src.get(r2Env(kv, r2.bucket));
+    const data = await src.get(r2Env(kv, r2.bucket));
+    expect(r2.gets[1].ifNoneMatch).toBe('"a"');
+    expect(data.items).toHaveLength(2);
+    expect(src.status().from).toBe("memory");
+    expect(puts).toHaveLength(1);
+  });
+
+  it("picks up a changed object", async () => {
+    const { puts, kv } = fakeKv();
+    const r2 = fakeR2({ body: BODY, etag: "a" });
+    const src = make(0);
+    await src.get(r2Env(kv, r2.bucket));
+    r2.set({ body: BODY_CHANGED, etag: "b" });
+    const data = await src.get(r2Env(kv, r2.bucket));
+    expect(data.version).toBe(2);
+    expect(puts).toHaveLength(2);
+  });
+
+  it("falls back to stale memory, then KV, when the object is missing or the binding fails", async () => {
+    const hash = await sha256Hex(BODY);
+    const { kv } = fakeKv({ catalog: storedCopy(BODY, '"a"', hash) });
+    const empty = fakeR2();
+    const fromKv = await make(0).get(r2Env(kv, empty.bucket));
+    expect(fromKv.items).toHaveLength(2);
+
+    const src = make(0);
+    const r2 = fakeR2({ body: BODY, etag: "a" });
+    await src.get(r2Env(kv, r2.bucket));
+    const stale = await src.get(r2Env(kv, undefined)); // binding missing → stale memory
+    expect(stale.items).toHaveLength(2);
+    expect(src.status().from).toBe("memory");
+  });
+
+  it("throws unavailable with no object, no memory and no KV copy", async () => {
+    const { kv } = fakeKv();
+    await expect(make().get(r2Env(kv, fakeR2().bucket))).rejects.toBeInstanceOf(ToolError);
+  });
+});

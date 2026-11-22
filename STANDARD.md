@@ -46,6 +46,7 @@ Every MCP built from this kit follows this checklist. The kit enforces it; clone
 
 - One JSON file generated at site build time (listed items only, body as plain text), re-checked on a ~10 min interval with conditional requests.
 - Loading order per Worker instance (`kit/core/static-source.ts`): fresh memory → conditional fetch (`If-None-Match`; a 304 keeps memory) → stale memory → KV last-good copy → clear error. KV is written only when the ETag or body hash changed.
+- Private data: read the file from an R2 binding instead of a URL (`r2: { bucket, key }`, kit v0.4.0). Same order; the object's ETag stands in for the HTTP one.
 - Recommended shape (`kit/core/search.ts` works over it):
 
 ```json

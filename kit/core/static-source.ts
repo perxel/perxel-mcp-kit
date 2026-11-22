@@ -6,8 +6,14 @@ import type { SourceStatus } from "./worker.js";
 export interface StaticSourceOptions<T> {
   /** Source name, shown in /health (e.g. "content"). */
   name: string;
-  /** Where to fetch the JSON file from. */
-  url: (env: Env) => string;
+  /** Where to fetch the JSON file from (a public URL). Set this or `r2`. */
+  url?: (env: Env) => string;
+  /**
+   * Read the JSON file from an R2 binding instead of a URL, for private data
+   * (e.g. a catalog only this Worker may read). Same loading order: the
+   * object's HTTP ETag is sent as `If-None-Match`, a match counts as a 304.
+   */
+  r2?: { bucket: (env: Env) => R2Bucket | undefined; key: string };
   /** Key in CONTENT_KV holding the last good copy. */
   kvKey: string;
   /** Fresh-memory window in ms (default 600_000, about 10 minutes). */
@@ -57,7 +63,17 @@ function defaultCount(data: unknown): number {
  * in-flight fetch. KV writes are awaited (they only happen when content
  * changed), so every caller sees a consistent state.
  */
+/** Reads an R2 object as a Response: 200 with the body and ETag, 304 on an ETag match, 404 when missing. */
+async function fetchR2(bucket: R2Bucket | undefined, key: string, etag: string): Promise<Response> {
+  if (!bucket) throw new Error("R2 binding missing");
+  const obj = await bucket.get(key, etag ? { onlyIf: new Headers({ "If-None-Match": etag }) } : undefined);
+  if (!obj) return new Response(null, { status: 404 });
+  if (!("body" in obj) || !obj.body) return new Response(null, { status: 304, headers: { etag: obj.httpEtag } });
+  return new Response(await (obj as R2ObjectBody).text(), { status: 200, headers: { etag: obj.httpEtag } });
+}
+
 export function createStaticSource<T>(opts: StaticSourceOptions<T>): StaticSource<T> {
+  if (!opts.url === !opts.r2) throw new Error(`${opts.name}: set exactly one of url and r2`);
   const maxAgeMs = opts.maxAgeMs ?? 600_000;
   const count = opts.count ?? defaultCount;
   let memory: Memory<T> | null = null;
@@ -122,7 +138,9 @@ export function createStaticSource<T>(opts: StaticSourceOptions<T>): StaticSourc
     const etag = memory?.etag ?? stored?.etag ?? "";
     let res: Response;
     try {
-      res = await fetch(opts.url(env), etag ? { headers: { "If-None-Match": etag } } : undefined);
+      res = opts.r2
+        ? await fetchR2(opts.r2.bucket(env), opts.r2.key, etag)
+        : await fetch(opts.url!(env), etag ? { headers: { "If-None-Match": etag } } : undefined);
     } catch {
       return fallback(stored);
     }
