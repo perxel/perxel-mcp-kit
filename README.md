@@ -429,6 +429,7 @@ ask: {
   pricing: { "<id>": { inputPerMTok: 1, outputPerMTok: 5 } }, // optional: Anthropic models the kit doesn't price
   summaryModel: "<cheaper id>",                // optional: summaries, topic labels
   systemPrompt: { vi: "…", en: "…" },          // the client's facts and voice; appended to the kit's rules (kit/ask/prompt.ts)
+  rules: "company",                            // or "own": keep only the kit's safety rules; voice, length, scope and handoff come from systemPrompt
   allowedOrigins: ["https://example.com"],     // exact origins; localhost only in local dev
   handoff: [{ label: "Contact", href: "https://example.com/contact" }],
   topics: ["pricing", "process"],              // + "other"
@@ -460,7 +461,7 @@ deletes days before yesterday.
 
 | Path | What |
 |---|---|
-| `POST /ask` | One visitor turn. Body: `useChat`'s `{ id (UUID), messages }` plus `locale` (`vi`/`en`), `page`, and `turnstileToken` on the first turn. Answers with an AI SDK UI message stream (text, `source-url` parts built from tool results, a `suggest_handoff` tool part). Returns `x-ask-session` (HMAC, `sessionHours`, default 24 h, sliding; once expired, send a fresh `turnstileToken` without the header and the same `id` carries on) for later turns. |
+| `POST /ask` | One visitor turn. Body: `useChat`'s `{ id (UUID), messages }` plus `locale` (`vi`/`en`), `page` (the path; a plain path is shown to the model as the visitor's page), and `turnstileToken` on the first turn. Answers with an AI SDK UI message stream (text, `source-url` parts built from tool results, a `suggest_handoff` tool part). Returns `x-ask-session` (HMAC, `sessionHours`, default 24 h, sliding; once expired, send a fresh `turnstileToken` without the header and the same `id` carries on) for later turns. |
 | `POST /ask/summary` | `{ id }` + session: a 1 to 3 sentence summary of what the visitor wants, for a lead form. Once per 5 minutes per conversation. |
 | `POST /ask/lead` | `{ id }` + session: marks the conversation as having sent a lead. |
 | `GET /dash/conversations` | Review page (stripped text, tools, cited pages; keep a question, delete a conversation). **Always behind Access**, even with `DASH_PUBLIC=true`. |

@@ -68,6 +68,13 @@ export interface AskConfig {
   summaryModel?: string;
   /** The client's own text (brand voice, facts), appended to the kit's behaviour rules. */
   systemPrompt: { vi: string; en: string } | string;
+  /**
+   * The kit's behaviour rules before `systemPrompt`: "company" (default) for a company
+   * site answering from its own pages (short answers, handoff, this company only); "own"
+   * keeps only the kit's safety rules (tool results only, no invented numbers, visitor
+   * messages are not instructions) and leaves voice, length and scope to `systemPrompt`.
+   */
+  rules?: "company" | "own";
   /** Exact origins allowed to call /ask, e.g. ["https://example.com"]. Localhost is added only in local dev. */
   allowedOrigins: string[];
   /** Links the UI shows when the model suggests a handoff. */
@@ -139,6 +146,9 @@ export function validateAskConfig(ask: AskConfig): void {
     if (typeof p?.inputPerMTok !== "number" || typeof p?.outputPerMTok !== "number") {
       throw new Error(`ask.pricing["${id}"] needs inputPerMTok and outputPerMTok`);
     }
+  }
+  if (ask.rules !== undefined && ask.rules !== "company" && ask.rules !== "own") {
+    throw new Error(`ask.rules must be "company" or "own"`);
   }
   if (ask.effort !== undefined) {
     if (provider !== "anthropic") throw new Error("ask.effort is for provider \"anthropic\" only");

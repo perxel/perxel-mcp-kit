@@ -65,6 +65,7 @@ describe("ask config", () => {
     ["half a price", { provider: "anthropic", model: "x", pricing: { x: { inputPerMTok: 1 } as never } }],
     ["negative price", { provider: "anthropic", model: "x", pricing: { x: { inputPerMTok: -1, outputPerMTok: 1 } } }],
     ["zero question limit", { limits: { questionsPerVisitorPerDay: 0 } }],
+    ["unknown rules", { rules: "strict" as "own" }],
   ])("rejects %s", (_name, o) => {
     expect(() => defineConfig(config(ask(o as Partial<AskConfig>)))).toThrow(/ask\./);
   });
