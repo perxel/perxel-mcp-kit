@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { issueSession, SESSION_TTL_MS, verifySession } from "./session.js";
+import { issueSession, issueVisitor, SESSION_TTL_MS, verifySession, verifyVisitor } from "./session.js";
 import { verifyTurnstile } from "./turnstile.js";
 
 const SECRET = "test-secret-0123456789";
@@ -81,5 +81,25 @@ describe("turnstile", () => {
       throw new Error("down");
     }) as unknown as typeof fetch;
     expect((await verifyTurnstile({ ...base, fetcher: boom })).reason).toBe("network");
+  });
+});
+
+describe("visitor tokens", () => {
+  it("round-trips a fresh id and keeps a given one", async () => {
+    const t = await issueVisitor(SECRET);
+    const id = await verifyVisitor(SECRET, t);
+    expect(id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await verifyVisitor(SECRET, await issueVisitor(SECRET, ID))).toBe(ID);
+  });
+
+  it("rejects a changed id, another secret, a session token and junk", async () => {
+    const t = await issueVisitor(SECRET, ID);
+    const other = "11111111-1111-4111-8111-111111111111";
+    expect(await verifyVisitor(SECRET, other + t.slice(ID.length))).toBeNull();
+    expect(await verifyVisitor("another-secret-0123456789", t)).toBeNull();
+    expect(await verifyVisitor(SECRET, await issueSession(SECRET, ID, 1_000))).toBeNull();
+    expect(await verifyVisitor(SECRET, "nope")).toBeNull();
+    expect(await verifyVisitor(SECRET, null)).toBeNull();
+    expect(await verifyVisitor(undefined, t)).toBeNull();
   });
 });

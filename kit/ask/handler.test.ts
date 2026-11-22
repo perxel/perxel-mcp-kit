@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -7,9 +6,9 @@ import type { McpConfig } from "../core/config.js";
 import type { Env } from "../core/env.js";
 import { defineTool } from "../core/tool.js";
 import { handleAsk, resetAskCaches, stepTiming, type AskDeps } from "./handler.js";
-import { issueSession, verifySession } from "./session.js";
+import { issueSession, issueVisitor, verifySession } from "./session.js";
 import { appendTurn, getConversation, getMessages } from "./store.js";
-import { FakeD1 } from "./testing/fake-d1.js";
+import { askSchema, FakeD1 } from "./testing/fake-d1.js";
 
 const NOW = Date.parse("2026-10-10T05:00:00Z");
 const ID = "6b0e6f0e-8a2b-4c47-9d0a-7d3b1d2c9f10";
@@ -91,8 +90,10 @@ interface Setup {
   run: (req: Request, overrides?: Partial<AskDeps>) => Promise<{ res: Response; body: string }>;
 }
 
-function setup(opts: { limited?: boolean; envOverrides?: Partial<Env>; turnstileOk?: boolean; model?: MockLanguageModelV4 } = {}): Setup {
-  const db = new FakeD1(readFileSync("kit/ask/migrations/0001_init.sql", "utf8")) as unknown as D1Database;
+function setup(
+  opts: { limited?: boolean; envOverrides?: Partial<Env>; turnstileOk?: boolean; model?: MockLanguageModelV4; config?: McpConfig } = {},
+): Setup {
+  const db = new FakeD1(askSchema()) as unknown as D1Database;
   const model = opts.model ?? mockModel();
   const s: Setup = {
     env: {
@@ -120,7 +121,7 @@ function setup(opts: { limited?: boolean; envOverrides?: Partial<Env>; turnstile
         now: () => NOW,
         ...overrides,
       };
-      const res = await handleAsk(req, s.env, ctx, config, () => {}, deps);
+      const res = await handleAsk(req, s.env, ctx, opts.config ?? config, () => {}, deps);
       const body = await res.text();
       await Promise.all(pending);
       return { res, body };
@@ -140,8 +141,12 @@ function askBody(text: string, extra: Record<string, unknown> = {}) {
   };
 }
 
-function req(body: unknown, init: { path?: string; origin?: string | null; session?: string; method?: string; raw?: string } = {}) {
-  const headers: Record<string, string> = { "content-type": "application/json", "CF-Connecting-IP": "203.0.113.5" };
+function req(
+  body: unknown,
+  init: { path?: string; origin?: string | null; session?: string; method?: string; raw?: string; visitor?: string; ip?: string } = {},
+) {
+  const headers: Record<string, string> = { "content-type": "application/json", "CF-Connecting-IP": init.ip ?? "203.0.113.5" };
+  if (init.visitor) headers["x-ask-visitor"] = init.visitor;
   if (init.origin !== null) headers["origin"] = init.origin ?? ORIGIN;
   if (init.session) headers["x-ask-session"] = init.session;
   const method = init.method ?? "POST";
@@ -287,7 +292,7 @@ describe("POST /ask success", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/event-stream");
     expect(res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
-    expect(res.headers.get("access-control-expose-headers")).toBe("x-ask-session");
+    expect(res.headers.get("access-control-expose-headers")).toBe("x-ask-session, x-ask-visitor, x-ask-remaining");
     expect(body).toContain('"type":"source-url"');
     expect(body).toContain("https://example.com/wp");
     expect(body).toContain("Có, xem trang WordPress.");
@@ -396,5 +401,91 @@ describe("stepTiming", () => {
 
   it("tolerates steps without performance data", () => {
     expect(stepTiming([{}])).toEqual({ modelMs: 0, toolMs: 0, steps: [{ ms: 0, firstOutputMs: null, toolMs: 0, tools: [] }] });
+  });
+});
+
+describe("daily question limit", () => {
+  const limited = (limits: Record<string, number>): McpConfig => ({ ...config, ask: { ...config.ask!, limits } });
+  // A new conversation id per question, so the per-conversation cap never applies.
+  const convo = (n: number) => `6b0e6f0e-8a2b-4c47-9d0a-${String(n).padStart(12, "0")}`;
+
+  it("without limits: no count, but a visitor id is still handed out", async () => {
+    const { res } = await setup().run(req(askBody("hi")));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-ask-visitor")).toMatch(/^[0-9a-f-]{36}\./);
+    expect(res.headers.get("x-ask-remaining")).toBeNull();
+  });
+
+  it("refuses the visitor's question past the limit, with scope, limit and Retry-After to Vietnam midnight", async () => {
+    const s = setup({ config: limited({ questionsPerVisitorPerDay: 2 }) });
+    const visitor = await issueVisitor(SECRET);
+    const first = await s.run(req(askBody("q", { id: convo(1) }), { visitor }));
+    expect(first.res.headers.get("x-ask-visitor")).toBe(visitor);
+    expect(first.res.headers.get("x-ask-remaining")).toBe("1");
+    const second = await s.run(req(askBody("q", { id: convo(2) }), { visitor }));
+    expect(second.res.headers.get("x-ask-remaining")).toBe("0");
+    const third = await s.run(req(askBody("q", { id: convo(3) }), { visitor }));
+    expect(third.res.status).toBe(429);
+    expect(JSON.parse(third.body)).toEqual({ code: "quota", scope: "visitor", limit: 2 });
+    // NOW is 12:00 in Vietnam: 12 hours to midnight.
+    expect(third.res.headers.get("retry-after")).toBe(String(12 * 3600));
+    expect(third.res.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    expect(s.model.doStreamCalls).toHaveLength(4); // two answers, two model steps each
+  });
+
+  it("a forged visitor id gets a new one; the IP limit still holds across visitors", async () => {
+    const s = setup({ config: limited({ questionsPerVisitorPerDay: 5, questionsPerIpPerDay: 2 }) });
+    const forged = `${"1".repeat(8)}-1111-4111-8111-111111111111.${"A".repeat(43)}`;
+    const a = await s.run(req(askBody("q", { id: convo(1) }), { visitor: forged }));
+    expect(a.res.status).toBe(200);
+    expect(a.res.headers.get("x-ask-visitor")).not.toBe(forged);
+    expect(a.res.headers.get("x-ask-remaining")).toBe("1"); // min(visitor 4, IP 1)
+    await s.run(req(askBody("q", { id: convo(2) })));
+    const c = await s.run(req(askBody("q", { id: convo(3) })));
+    expect(JSON.parse(c.body)).toEqual({ code: "quota", scope: "ip", limit: 2 });
+    const otherIp = await s.run(req(askBody("q", { id: convo(4) }), { ip: "198.51.100.7" }));
+    expect(otherIp.res.status).toBe(200);
+  });
+
+  it("a request refused earlier (rate limit) does not use a question", async () => {
+    const cfg = limited({ questionsPerVisitorPerDay: 1 });
+    const visitor = await issueVisitor(SECRET);
+    const s = setup({ config: cfg, limited: true });
+    await s.run(req(askBody("q", { id: convo(1) }), { visitor }));
+    const ok = await setup({ config: cfg }).run(req(askBody("q", { id: convo(2) }), { visitor }));
+    expect(ok.res.status).toBe(200);
+  });
+});
+
+describe("Anthropic provider", () => {
+  const anthropicConfig: McpConfig = { ...config, ask: { ...config.ask!, provider: "anthropic", model: "claude-haiku-5-5" } };
+
+  it("prices the turn from usage when the provider reports no cost", async () => {
+    let call = 0;
+    const model = new MockLanguageModelV4({
+      doStream: async () => {
+        call++;
+        const big = { inputTokens: { total: 1_000_000, noCache: 1_000_000, cacheRead: undefined, cacheWrite: undefined }, outputTokens: { total: 1_000_000, text: 1_000_000, reasoning: undefined } };
+        const chunks: Record<string, unknown>[] = [
+          { type: "text-start", id: "t" },
+          { type: "text-delta", id: "t", delta: "Xin chào." },
+          { type: "text-end", id: "t" },
+          { type: "finish", finishReason: { unified: "stop", raw: undefined }, usage: big },
+        ];
+        return { stream: simulateReadableStream({ chunks }) as never };
+      },
+    });
+    const s = setup({ config: anthropicConfig, model, envOverrides: { OPENROUTER_API_KEY: undefined, ANTHROPIC_API_KEY: "k" } });
+    const { res } = await s.run(req(askBody("hi")));
+    expect(res.status).toBe(200);
+    expect(call).toBe(1);
+    const convo = await getConversation(s.db, ID);
+    expect(convo?.cost_usd).toBeCloseTo(0.1 + 0.5); // Haiku 5.5: $0.10 in, $0.50 out per million
+  });
+
+  it("needs ANTHROPIC_API_KEY, not the OpenRouter key", async () => {
+    const s = setup({ config: anthropicConfig });
+    const { body } = await s.run(req(askBody("hi")), { modelFor: undefined });
+    expect(code(body)).toBe("upstream");
   });
 });

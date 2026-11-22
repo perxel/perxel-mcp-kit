@@ -100,8 +100,8 @@ Ask adds one row per turn with `blobs[1]` = `ask.turn`, `blobs[4]` = `ask`, stat
 - Every visitor message redacted before D1 and before `/ask/summary`; raw text goes to the model only.
 - Message text deleted after `retentionDays` (default 90) by the daily cron; `caller_key` nulled with it.
 - Turnstile on a conversation's first turn, an HMAC session after it; exact-origin CORS (`allowedOrigins`), localhost only when the Worker itself is local.
-- Caps: user messages per conversation, input length, output tokens, tool steps, per-IP per minute, a daily USD budget (soft); a credit limit on the OpenRouter key (hard).
-- OpenRouter with `provider.data_collection: "deny"`; cost summed over steps.
+- Caps: user messages per conversation, input length, output tokens, tool steps, per-IP per minute, a daily USD budget (soft), optional questions per visitor and per IP per Vietnam day (signed visitor id, counted in D1); a credit or spend limit on the provider key (hard).
+- OpenRouter with `provider.data_collection: "deny"`, or Anthropic's API directly (`provider: "anthropic"`); cost summed over steps (OpenRouter's reported cost, or Anthropic usage priced from `ANTHROPIC_PRICES` / `ask.pricing`; an unpriced model fails validation).
 - `/dash/conversations` behind its own Access app plus the JWT re-check, regardless of `DASH_PUBLIC`; actions are same-origin POSTs. The public dashboard shows counts and topics, never text.
 - No production Langfuse or other third-party logging by default; another sink goes through `AskLogger` (`kit/ask/logger.ts`).
 
@@ -115,7 +115,7 @@ Ask adds one row per turn with `blobs[1]` = `ask.turn`, `blobs[4]` = `ask`, stat
 
 - Workers Paid $5/month: 10M requests then $0.30/M, 30M CPU-ms then $0.02/M. Covers the MCPs, KV and the proxy at small scale. No containers.
 - Zero Trust: 50 free users shared across all MCPs in the account (sign-in users plus dashboard viewers), then ~$7/user/month.
-- LLM tokens are paid by the user's AI subscription, not by the MCP. Ask is the exception: its model calls are paid through the OpenRouter key on the Worker (per-answer cost in `/dash`, exact billing in OpenRouter's per-key usage). D1, Turnstile and the cron fit the free tiers at small traffic.
+- LLM tokens are paid by the user's AI subscription, not by the MCP. Ask is the exception: its model calls are paid through the OpenRouter or Anthropic key on the Worker (per-answer cost in `/dash`: OpenRouter's reported cost, or Anthropic usage priced from the kit's table; exact billing in the provider's own usage page). D1, Turnstile and the cron fit the free tiers at small traffic.
 
 ## Dev rules
 

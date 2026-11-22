@@ -36,6 +36,8 @@ export interface Env {
   ASK_RATE_LIMITER?: RateLimit;
   /** Ask: OpenRouter key (secret). */
   OPENROUTER_API_KEY?: string;
+  /** Ask with `provider: "anthropic"`: Anthropic API key (secret). */
+  ANTHROPIC_API_KEY?: string;
   /** Ask: Turnstile widget secret. */
   TURNSTILE_SECRET?: string;
   /** Ask: HMAC key for session tokens (secret, random). */

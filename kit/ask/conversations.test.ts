@@ -1,10 +1,9 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { McpConfig } from "../core/config.js";
 import type { Env } from "../core/env.js";
 import { handleConversations, isConversationsPath } from "./conversations.js";
 import { appendTurn, getConversation } from "./store.js";
-import { FakeD1 } from "./testing/fake-d1.js";
+import { askSchema, FakeD1 } from "./testing/fake-d1.js";
 
 const ID = "6b0e6f0e-8a2b-4c47-9d0a-7d3b1d2c9f10";
 const NOW = 1_800_000_000_000;
@@ -20,7 +19,7 @@ const config: McpConfig = {
 };
 
 async function db() {
-  const d = new FakeD1(readFileSync("kit/ask/migrations/0001_init.sql", "utf8")) as unknown as D1Database;
+  const d = new FakeD1(askSchema()) as unknown as D1Database;
   await appendTurn(d, {
     id: ID, now: NOW - 1000, locale: "vi", page: "/", country: "VN", callerKey: "ip:x", model: "m",
     user: "<script>alert(1)</script> giá?", assistant: "Từ 20.000.000đ.", tools: [{ name: "search_content" }],

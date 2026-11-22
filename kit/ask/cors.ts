@@ -39,7 +39,7 @@ export function preflight(request: Request, allowedOrigins: string[]): Response 
     headers: {
       "access-control-allow-origin": origin,
       "access-control-allow-methods": "POST",
-      "access-control-allow-headers": "content-type, x-ask-session",
+      "access-control-allow-headers": "content-type, x-ask-session, x-ask-visitor",
       "access-control-max-age": "600",
       vary: "Origin",
     },
@@ -53,7 +53,7 @@ export function preflight(request: Request, allowedOrigins: string[]): Response 
 export function withCors(response: Response, origin: string): Response {
   const headers = new Headers(response.headers);
   headers.set("access-control-allow-origin", origin);
-  headers.set("access-control-expose-headers", "x-ask-session");
+  headers.set("access-control-expose-headers", "x-ask-session, x-ask-visitor, x-ask-remaining");
   const vary = headers.get("vary");
   if (vary === null) headers.set("vary", "Origin");
   else if (!vary.split(",").some((v) => v.trim().toLowerCase() === "origin")) headers.set("vary", `${vary}, Origin`);
