@@ -1,4 +1,5 @@
 import type { Env } from "./env.js";
+import type { ClientFamily } from "./caller.js";
 import { KIT_VERSION } from "./version.js";
 
 export type MetricStatus = "ok" | "error" | "invalid_input" | "unauthorized" | "forbidden" | "rate_limited";
@@ -9,7 +10,7 @@ export interface MetricRow {
   tool: string; // "unknown" when the tool name wasn't found
   status: MetricStatus;
   code: string; // error code or ""
-  client: "claude-ai" | "claude-code" | "inspector" | "other" | "ask"; // "ask": tool calls made by the Ask chat
+  client: ClientFamily | "ask"; // "ask": tool calls made by the Ask chat
   access: "public" | "private";
   auth: "anon" | "user";
   country: string;
@@ -29,6 +30,43 @@ export interface MetricRow {
  * double9 ms in tools. Dashboard tool-call panels exclude these rows.
  */
 export const ASK_TURN_TOOL = "ask.turn";
+
+/**
+ * One row per `tools/list` request, with `tool: "tools.list"`: a client
+ * connecting (or starting a conversation) and reading the tool list. The
+ * closest thing to counting connections on a stateless server, since 2026
+ * clients send no `initialize`. Same blobs as a tool row (client, country,
+ * era...); double1 latencyMs, double2 -1, double3 -1. Dashboard tool-call
+ * panels exclude these rows; the Connections panel reads them.
+ */
+export const TOOLS_LIST_ROW = "tools.list";
+
+export interface ToolsListRow {
+  callerKey: string;
+  slug: string;
+  status: MetricStatus;
+  code: string;
+  client: ClientFamily;
+  auth: "anon" | "user";
+  country: string;
+  era: "modern" | "legacy";
+  latencyMs: number;
+}
+
+/** Never throws and never fails the request; no personal data in the row. */
+export function recordToolsList(env: Env, row: ToolsListRow): void {
+  const analytics = env.METRICS;
+  if (!analytics) return;
+  try {
+    analytics.writeDataPoint({
+      indexes: [row.callerKey],
+      blobs: [row.slug, TOOLS_LIST_ROW, row.status, row.code, row.client, "public", row.auth, row.country, row.era, KIT_VERSION],
+      doubles: [row.latencyMs, -1, -1],
+    });
+  } catch {
+    // A metrics failure must never fail the request.
+  }
+}
 
 export interface AskTurnRow {
   callerKey: string;

@@ -37,12 +37,14 @@ export async function ipCallerKey(
   return `ip:${(await sha256Hex(`${salt}:${ip}:${vietnamDate(now)}`)).slice(0, 16)}`;
 }
 
-export type ClientFamily = "claude-ai" | "claude-code" | "inspector" | "other";
+export type ClientFamily = "claude-ai" | "claude-code" | "chatgpt" | "cursor" | "vscode" | "inspector" | "other";
 
 /**
  * Client family for the metrics `client` blob: Anthropic's cloud range wins
  * (matched on CF-Connecting-IP, which a client can't fake), then the 2026
- * client identity (`clientInfo.name`), then the User-Agent.
+ * client identity (`clientInfo.name`), then the User-Agent. ChatGPT's
+ * connectors identify as `openai-mcp`; Cursor is checked before VS Code
+ * because it is built on VS Code and may carry both names.
  */
 export function clientFamily(
   ip: string | undefined,
@@ -52,6 +54,9 @@ export function clientFamily(
   if (isAnthropicCloudCaller(ip)) return "claude-ai";
   const hay = `${clientName ?? ""} ${userAgent ?? ""}`.toLowerCase();
   if (hay.includes("claude-code") || hay.includes("claude code")) return "claude-code";
+  if (hay.includes("openai") || hay.includes("chatgpt")) return "chatgpt";
+  if (hay.includes("cursor")) return "cursor";
+  if (hay.includes("visual studio code") || hay.includes("vscode") || hay.includes("vs code")) return "vscode";
   if (hay.includes("inspector")) return "inspector";
   return "other";
 }

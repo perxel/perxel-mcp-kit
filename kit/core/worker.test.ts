@@ -7,6 +7,7 @@ import { definePrompt } from "./prompt.js";
 import { defineTool, ToolError } from "./tool.js";
 import { KIT_VERSION } from "./version.js";
 import { createWorker, type SourceStatus } from "./worker.js";
+import { clientFamily } from "./caller.js";
 import exampleConfig from "../../mcp.config.js";
 
 const okTool = defineTool({
@@ -417,5 +418,68 @@ describe("subscriptions/listen (2026-07-28)", () => {
     const first = new TextDecoder().decode((await reader.read()).value);
     expect(first).toContain("notifications/subscriptions/acknowledged");
     await reader.cancel();
+  });
+});
+
+describe("tools.list rows", () => {
+  async function listTools(worker: ReturnType<typeof createWorker>, env: Env, ctx: ExecutionContext, userAgent: string) {
+    const res = await worker.fetch(
+      new Request("https://mcp.example.com/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "CF-Connecting-IP": "1.2.3.4",
+          "user-agent": userAgent,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      }),
+      env,
+      ctx,
+    );
+    await res.text();
+    return res;
+  }
+
+  it("records one tools.list row per tools/list request, with the client family", async () => {
+    const worker = createWorker(config);
+    const { env, points } = fakeEnv();
+    const { ctx, waited } = fakeCtx();
+    const res = await listTools(worker, env, ctx, "openai-mcp/1.0.0");
+    expect(res.status).toBe(200);
+    await Promise.all(waited);
+    expect(points).toHaveLength(1);
+    const p = points[0];
+    expect(p.indexes?.[0]).toMatch(/^ip:[0-9a-f]{16}$/);
+    expect(p.blobs?.slice(0, 5)).toEqual(["example", "tools.list", "ok", "", "chatgpt"]);
+    expect(p.blobs?.[9]).toBe(KIT_VERSION);
+    expect(p.doubles?.[1]).toBe(-1);
+  });
+
+  it("writes no tools.list row for a tools/call", async () => {
+    const worker = createWorker(config);
+    const { env, points } = fakeEnv();
+    const { ctx, waited } = fakeCtx();
+    await callTool(worker, env, ctx, "ok_tool");
+    await Promise.all(waited);
+    expect(points.map((p) => p.blobs?.[1])).not.toContain("tools.list");
+  });
+});
+
+describe("clientFamily", () => {
+  it.each([
+    ["openai-mcp/1.0.0", "chatgpt"],
+    ["ChatGPT-User", "chatgpt"],
+    ["Cursor/1.7 (vscode 1.99)", "cursor"],
+    ["Visual Studio Code", "vscode"],
+    ["claude-code/2.1", "claude-code"],
+    ["mcp-inspector", "inspector"],
+    ["curl/8", "other"],
+  ])("%s -> %s", (ua, family) => {
+    expect(clientFamily("1.2.3.4", undefined, ua)).toBe(family);
+  });
+
+  it("uses clientInfo.name before the User-Agent", () => {
+    expect(clientFamily("1.2.3.4", "cursor-vscode", "node")).toBe("cursor");
   });
 });

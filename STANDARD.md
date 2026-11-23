@@ -69,7 +69,7 @@ One `writeDataPoint` per `tools/call` (not per `tools/list`), written in `ctx.wa
 | `blobs[1]` | tool name (`unknown` if not found) |
 | `blobs[2]` | status: `ok`, `error`, `invalid_input`, `unauthorized`, `forbidden`, `rate_limited` |
 | `blobs[3]` | error code or `""` |
-| `blobs[4]` | client family: `claude-ai` (IP in Anthropic range), `claude-code`, `inspector`, `other` (from 2026 client identity `clientInfo.name`, else User-Agent), `ask` (called by the Ask chat) |
+| `blobs[4]` | client family: `claude-ai` (IP in Anthropic range), `claude-code`, `chatgpt` (`openai-mcp`), `cursor`, `vscode`, `inspector`, `other` (from 2026 client identity `clientInfo.name`, else User-Agent), `ask` (called by the Ask chat) |
 | `blobs[5]` | access: `public` or `private` |
 | `blobs[6]` | auth: `anon` or `user` |
 | `blobs[7]` | country (`request.cf.country` or `""`) |
@@ -81,7 +81,9 @@ One `writeDataPoint` per `tools/call` (not per `tools/list`), written in `ctx.wa
 
 Never tool arguments, emails, raw IPs, user ids, or tokens. 401/403/429 on a `tools/call` also produce a row.
 
-Ask adds one row per turn with `blobs[1]` = `ask.turn`, `blobs[4]` = `ask`, status `ok` / `error` / `rate_limited` and the Ask error code in `blobs[3]`; `doubles[1]` = tool calls in the turn, `doubles[2]` = cost in micro-USD (this slot is bytes on tool rows), `doubles[3]` = output tokens, `doubles[4]` = ms from the request to the first answer text (`-1`: none), `doubles[5]` = ms of checks before the model call, `doubles[6]` = model steps (`0` on refusals and on rows written before these fields existed), `doubles[7]` = ms waiting on the model, `doubles[8]` = ms in tools; `doubles[0]` is the request to the last token. Dashboard tool-call panels exclude `ask.turn` rows.
+Each `tools/list` request adds one row with `blobs[1]` = `tools.list` (a client connecting or starting a conversation; 2026 clients send no `initialize`), status `ok` or `error` (code `http_<status>`), the same client, auth, country and era blobs, `blobs[5]` = `public`, `doubles[0]` = latency, `doubles[1]` and `doubles[2]` = `-1`. The dashboard's Connections panel counts the `ok` ones by client; tool-call panels exclude them.
+
+Ask adds one row per turn with `blobs[1]` = `ask.turn`, `blobs[4]` = `ask`, status `ok` / `error` / `rate_limited` and the Ask error code in `blobs[3]`; `doubles[1]` = tool calls in the turn, `doubles[2]` = cost in micro-USD (this slot is bytes on tool rows), `doubles[3]` = output tokens, `doubles[4]` = ms from the request to the first answer text (`-1`: none), `doubles[5]` = ms of checks before the model call, `doubles[6]` = model steps (`0` on refusals and on rows written before these fields existed), `doubles[7]` = ms waiting on the model, `doubles[8]` = ms in tools; `doubles[0]` is the request to the last token. Dashboard tool-call panels exclude `ask.turn` and `tools.list` rows.
 
 - Analytics Engine: one dataset per MCP (`mcp_<slug>`, `-` → `_`), 3-month retention.
 - Static JSON sources additionally keep a last-good copy in KV, written only when content changes.
