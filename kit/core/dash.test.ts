@@ -135,11 +135,19 @@ describe("dashQueries", () => {
     }
   });
 
-  it("excludes ask.turn rows from all panels", () => {
+  it("excludes ask.turn and tools.list rows from the tool-call panels", () => {
     const queries = dashQueries("mcp_my_demo", "7d");
     for (const [id, sql] of Object.entries(queries)) {
+      if (id === "connections") continue;
       expect(sql, id).toContain("blob2 != 'ask.turn'");
+      expect(sql, id).toContain("blob2 != 'tools.list'");
     }
+  });
+
+  it("counts connections from ok tools.list rows by client", () => {
+    const sql = dashQueries("mcp_my_demo", "7d").connections;
+    expect(sql).toContain("blob2 = 'tools.list' AND blob3 = 'ok'");
+    expect(sql).toContain("SELECT blob5 AS k");
   });
 });
 
@@ -308,7 +316,7 @@ describe("handleDash", () => {
     const res = await handleDash(local("/dash/?range=24h"), env, config, "/dash", noLog, NOW);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(seen).toHaveLength(8);
+    expect(seen).toHaveLength(9);
     expect(seen.every((s) => s.auth === "Bearer k-123")).toBe(true);
     expect(seen.every((s) => s.sql.includes("FROM mcp_my_demo") && s.sql.includes("INTERVAL '24' HOUR"))).toBe(true);
     expect(html).toContain("120"); // calls tile

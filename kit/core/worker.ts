@@ -31,7 +31,7 @@ import {
   type GateCall,
 } from "./oauth.js";
 import { checkRateLimit } from "./rate-limit.js";
-import { recordToolCall, type MetricStatus } from "./metrics.js";
+import { recordToolCall, recordToolsList, type MetricStatus } from "./metrics.js";
 import { ToolError, type ToolContext } from "./tool.js";
 import { KIT_VERSION } from "./version.js";
 
@@ -109,6 +109,12 @@ export function buildServer(
 
 function json(status: number, body: unknown, headers?: HeadersInit): Response {
   return Response.json(body, { status, headers });
+}
+
+/** True when the body (one message or a batch) asks for `tools/list`. */
+function asksToolsList(body: unknown): boolean {
+  const msgs = Array.isArray(body) ? body : [body];
+  return msgs.some((m) => isRecord(m) && m["method"] === "tools/list");
 }
 
 /** The 2026 client identity (`clientInfo.name`) from the first message that carries it. */
@@ -261,6 +267,24 @@ async function serveMcp(opts: McpServeOpts): Promise<Response> {
           });
         }
       })(),
+    );
+  }
+  if (asksToolsList(body)) {
+    const facts = await reqFacts(env, request, body, ip, userId);
+    ctx.waitUntil(
+      Promise.resolve().then(() =>
+        recordToolsList(env, {
+          callerKey: facts.callerKey,
+          slug: config.slug,
+          status: res.ok ? "ok" : "error",
+          code: res.ok ? "" : `http_${res.status}`,
+          client: facts.client,
+          auth: metricAuth,
+          country: facts.country,
+          era,
+          latencyMs,
+        }),
+      ),
     );
   }
   log("request", { route: "mcp", method: request.method, status: res.status, latencyMs, era });

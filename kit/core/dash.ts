@@ -56,9 +56,10 @@ export function isDashPath(path: string, dashPath: string): boolean {
   return path === dashPath || path.startsWith(`${dashPath}/`);
 }
 
-type PanelId = "totals" | "timeline" | "latency" | "tools" | "clients" | "auth" | "countries" | "errors";
+type PanelId = "totals" | "timeline" | "latency" | "tools" | "clients" | "connections" | "auth" | "countries" | "errors";
 
-const EXCLUDE_ASK_TURN = " AND blob2 != 'ask.turn'";
+/** Tool-call panels skip the Ask turn rows and the `tools.list` (connection) rows. */
+const EXCLUDE_ASK_TURN = " AND blob2 != 'ask.turn' AND blob2 != 'tools.list'";
 
 /** The fixed SQL per panel. Every query reads only `dataset` and ends in FORMAT JSON. */
 export function dashQueries(dataset: string, range: DashRange): Record<PanelId, string> {
@@ -88,6 +89,9 @@ export function dashQueries(dataset: string, range: DashRange): Record<PanelId, 
       `sumIf(_sample_interval, double2 >= 0) AS lists, sumIf(double2 * _sample_interval, double2 >= 0) AS items ` +
       `FROM ${dataset} WHERE ${since}${EXCLUDE_ASK_TURN} GROUP BY tool ORDER BY calls DESC LIMIT 20 FORMAT JSON`,
     clients: breakdown("blob5"),
+    connections:
+      `SELECT blob5 AS k, ${calls} FROM ${dataset} WHERE ${since} AND blob2 = 'tools.list' AND blob3 = 'ok' ` +
+      `GROUP BY k ORDER BY calls DESC LIMIT 10 FORMAT JSON`,
     auth: breakdown("blob7"),
     countries: breakdown("blob8"),
     errors:
@@ -582,6 +586,7 @@ ${panelError(get("totals"))}
 
 <div class="grid2">
   <div class="card"><h2>Clients</h2>${panelError(get("clients"))}${barList(kv("clients"), "No data.")}</div>
+  <div class="card"><h2>Connections (tool list reads)</h2>${panelError(get("connections"))}${barList(kv("connections"), "No connections in this range.")}</div>
   <div class="card"><h2>Auth</h2>${panelError(get("auth"))}${barList(kv("auth"), "No data.")}</div>
   <div class="card"><h2>Countries</h2>${panelError(get("countries"))}${barList(kv("countries"), "No data.")}</div>
 </div>
